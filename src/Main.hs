@@ -1,4 +1,7 @@
 module Main where
+import Lexer
 
 main :: IO ()
-main = putStrLn "Hello, Haskell!"
+main = do
+    s <- getContents
+    print (alexScanTokens s)
