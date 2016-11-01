@@ -4,4 +4,4 @@ import Lexer
 main :: IO ()
 main = do
     s <- getContents
-    print (alexScanTokens s)
+    print (scanner s)
