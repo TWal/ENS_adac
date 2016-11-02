@@ -4,4 +4,4 @@ import Lexer
 main :: IO ()
 main = do
     s <- getContents
-    print (scanner s)
+    print (scanner s "<stdin>")
