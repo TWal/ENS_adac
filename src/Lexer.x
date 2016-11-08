@@ -1,5 +1,14 @@
 {
-module Lexer (runAlex', alexMonadScan', alexError', Alex, scanner) where
+module Lexer (
+    runAlex',
+    alexMonadScan',
+    alexError',
+    scanner,
+    Alex,
+    AlexPosn,
+    Token(..)
+) where
+
 import Control.Monad (liftM)
 }
 
@@ -12,7 +21,7 @@ tokens :-
     $white+                         ;
     "--".*                          ;
     $digit+                         { tok_read TokenInt }
-    \' . \'                         { tok' $ TokenChar . head . tail }
+    \' . \'                         { tok_char TokenChar }
     -- reserved words
     "access"                        { tok TokenAccess }
     "false"                         { tok TokenFalse }
@@ -53,44 +62,48 @@ tokens :-
     "+"                             { tok TokenAdd }
     "-"                             { tok TokenSubtract }
     "*"                             { tok TokenMultiply }
+    "/"                             { tok TokenDivide }
     "("                             { tok TokenLParent }
     ")"                             { tok TokenRParent }
     "rem"                           { tok TokenRem }
-    -- Some other characters 
+    -- Some other characters
     ":="                            { tok TokenAssign }
     ";"                             { tok TokenSemicolon }
     "."                             { tok TokenDot }
     ":"                             { tok TokenColon }
+    ","                             { tok TokenComma }
     -- identifier
     $alpha [$alpha $digit \_ ]*     { tok_string TokenIdent }
 
 {
 
---tok' :: (String -> TokenClass) -> AlexInput -> Int64 -> Alex Token
-tok' :: (String -> TokenClass) -> AlexAction Token
-tok' f (p,_,_,s) i = return $ Token p (f (take i s))
+tok' :: (AlexPosn -> String -> Token) -> AlexAction Token
+tok' f (p,_,_,s) i = return $ (f p (take i s))
 
-tok :: TokenClass -> AlexAction Token
-tok x = tok' (const x)
+tok :: (AlexPosn -> Token) -> AlexAction Token
+tok x = tok' $ \p _ -> x p
 
-tok_read :: (Integer -> TokenClass) -> AlexAction Token
-tok_read x = tok' $ \s -> x (read s)
+tok_read :: ((AlexPosn, Integer) -> Token) -> AlexAction Token
+tok_read x = tok' $ \p s -> x (p, (read s))
 
-tok_string :: (String -> TokenClass) -> AlexAction Token
-tok_string x = tok' $ \s -> x s
+tok_string :: ((AlexPosn, String) -> Token) -> AlexAction Token
+tok_string x = tok' $ \p s -> x (p, s)
+
+tok_char :: ((AlexPosn, Char) -> Token) -> AlexAction Token
+tok_char x = tok' $ \p s -> x (p, (head . tail $ s))
 
 alexEOF :: Alex Token
 alexEOF = do
   (p, _, _, _) <- alexGetInput
-  return $ Token p TokenEOF
+  return $ TokenEOF p
 
 scanner :: String -> FilePath -> Either String [Token]
 scanner str fp =
     let loop = do
                 t <- alexMonadScan'
-                let (Token _ cl) = t
-                if cl == TokenEOF then return [t]
-                else do
+                case t of
+                  TokenEOF _ -> return [t]
+                  _ -> do
                         toks <- loop
                         return (t : toks)
     in runAlex' str fp loop
@@ -107,7 +120,7 @@ alexMonadScan' = do
   sc <- alexGetStartCode
   case alexScan inp sc of
     AlexEOF -> alexEOF
-    AlexError (p,_,_,s) -> alexError' p $ "lexical error at character '" ++ take 1 s ++ "'" --line changed
+    AlexError (_,_,_,s) -> alexError' $ "lexical error at character '" ++ take 1 s ++ "'" --line changed
     AlexSkip  inp' _len -> do
         alexSetInput inp'
         alexMonadScan' --line changed
@@ -126,64 +139,65 @@ runAlex' s fp a = runAlex s $
     do setFilePath fp
        a
 
-alexError' :: AlexPosn -> String -> Alex a
-alexError' (AlexPn _ l c) msg =
+alexError' :: String -> Alex a
+alexError' msg =
     do
       fp <- getFilePath
+      ((AlexPn _ l c), _, _, _) <- alexGetInput
       alexError ("File \"" ++ fp ++ "\", line " ++ show l ++ ", characters " ++ show c ++ "-" ++ show (c+1)
           ++ ":\n" ++ msg)
 
-data Token = Token AlexPosn TokenClass deriving (Eq, Show)
-
-data TokenClass =
-      TokenInt Integer
-    | TokenIdent String
-    | TokenChar Char
-    | TokenAccess
-    | TokenFalse
-    | TokenLoop
-    | TokenProcedure
-    | TokenTrue
-    | TokenAnd
-    | TokenFor
-    | TokenNew
-    | TokenRecord
-    | TokenType
-    | TokenBegin
-    | TokenFunction
-    | TokenNot
-    | TokenUse
-    | TokenElse
-    | TokenIf
-    | TokenNull
-    | TokenReturn
-    | TokenWhile
-    | TokenElsif
-    | TokenIn
-    | TokenOr
-    | TokenReverse
-    | TokenWith
-    | TokenEnd
-    | TokenIs
-    | TokenOut
-    | TokenThen
-    | TokenEqual
-    | TokenNotEqual
-    | TokenLower
-    | TokenLowerEqual
-    | TokenGreater
-    | TokenGreaterEqual
-    | TokenAdd
-    | TokenSubtract
-    | TokenMultiply
-    | TokenLParent
-    | TokenRParent
-    | TokenRem
-    | TokenAssign
-    | TokenSemicolon
-    | TokenDot
-    | TokenColon
-    | TokenEOF
+data Token =
+      TokenInt (AlexPosn, Integer)
+    | TokenIdent (AlexPosn, String)
+    | TokenChar (AlexPosn, Char)
+    | TokenAccess AlexPosn
+    | TokenFalse AlexPosn
+    | TokenLoop AlexPosn
+    | TokenProcedure AlexPosn
+    | TokenTrue AlexPosn
+    | TokenAnd AlexPosn
+    | TokenFor AlexPosn
+    | TokenNew AlexPosn
+    | TokenRecord AlexPosn
+    | TokenType AlexPosn
+    | TokenBegin AlexPosn
+    | TokenFunction AlexPosn
+    | TokenNot AlexPosn
+    | TokenUse AlexPosn
+    | TokenElse AlexPosn
+    | TokenIf AlexPosn
+    | TokenNull AlexPosn
+    | TokenReturn AlexPosn
+    | TokenWhile AlexPosn
+    | TokenElsif AlexPosn
+    | TokenIn AlexPosn
+    | TokenOr AlexPosn
+    | TokenReverse AlexPosn
+    | TokenWith AlexPosn
+    | TokenEnd AlexPosn
+    | TokenIs AlexPosn
+    | TokenOut AlexPosn
+    | TokenThen AlexPosn
+    | TokenEqual AlexPosn
+    | TokenNotEqual AlexPosn
+    | TokenLower AlexPosn
+    | TokenLowerEqual AlexPosn
+    | TokenGreater AlexPosn
+    | TokenGreaterEqual AlexPosn
+    | TokenAdd AlexPosn
+    | TokenSubtract AlexPosn
+    | TokenMultiply AlexPosn
+    | TokenDivide AlexPosn
+    | TokenLParent AlexPosn
+    | TokenRParent AlexPosn
+    | TokenRem AlexPosn
+    | TokenAssign AlexPosn
+    | TokenSemicolon AlexPosn
+    | TokenDot AlexPosn
+    | TokenColon AlexPosn
+    | TokenComma AlexPosn
+    | TokenEOF AlexPosn
     deriving (Eq, Show)
 
 }

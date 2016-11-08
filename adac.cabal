@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 executable adac
   main-is:             Main.hs
-  other-modules:       Lexer
+  other-modules:       Lexer, Parser
   -- other-extensions:    
   build-depends:       base >=4.9 && <4.10
                      , array

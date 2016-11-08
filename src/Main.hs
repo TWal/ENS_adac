@@ -1,7 +1,7 @@
 module Main where
-import Lexer
+import Parser
 
 main :: IO ()
 main = do
     s <- getContents
-    print (scanner s "<stdin>")
+    print $ parseExp s "<stdin>"
