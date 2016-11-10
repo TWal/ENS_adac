@@ -61,7 +61,10 @@ import AST
     '.'         { TokenDot $$ }
     ':'         { TokenColon $$ }
     ','         { TokenComma $$ }
+    '..'       { TokenDoubledot $$ }
+    charval     { TokenCharval $$ }
 
+%left '..'
 %left or ORELSE
 %left and ANDTHEN
 %left not
@@ -95,7 +98,7 @@ binop : '='                     { (Equal, $1) }
       | or else %prec ORELSE    { (OrElse, $1) }
 
 expr :: { Ann Expr AlexPosn }
-expr : int                     { (EInt (snd $1), fst $1) }
+expr : int                     {% if (snd $1) > 2^31 then alexError' "integer too large" else return (EInt (snd $1), fst $1) }
      | char                    { (EChar (snd $1), fst $1) }
      | acces                   { (EAcces $1, snd $1) }
      | true                    { (EBool True, $1) }
@@ -108,7 +111,7 @@ expr : int                     { (EInt (snd $1), fst $1) }
      | '-' expr %prec NEG      { (EUnop (Negate, $1) $2, $1) }
      | new ident               { (ENew $2, $1) }
      | ident '(' exprlist ')'  { (ECall $1 $3, snd $1) }
-     -- charval
+     | charval '(' expr ')'    { (ECharval $3, $1) }
 
 exprlist :: { NonEmptyList (Ann Expr AlexPosn) }
 exprlist : expr               { Last $1 }
@@ -123,8 +126,8 @@ instr : acces ':=' expr ';'                     { (IAssign $1 $3, snd $1) }
       | begin instrlist end ';'                 { (IBegin $2, $1) }
       | if expr then instrlist elsiflist maybeelse end if ';'
                                                 { (IIf $2 $4 $5 $6, $1) }
-      | for ident in maybereverse expr '.' '.' expr loop instrlist end loop ';'
-                                                { (IFor $2 $4 $5 $8 $10, $1) }
+      | for ident in maybereverse expr '..' expr loop instrlist end loop ';'
+                                                { (IFor $2 $4 $5 $7 $9, $1) }
       | while expr loop instrlist end loop ';'  { (IWhile $2 $4, $1) }
 
 instrlist :: { NonEmptyList (Ann Instr AlexPosn) }
@@ -150,14 +153,14 @@ acces : ident           { (AccesIdent $1, snd $1) }
 
 decl :: { Ann Decl AlexPosn }
 decl : typet ident ';'                                  { (DType $2, $1) }
-     | typet ident is access ident                      { (DAccess $2 $5, $1) }
+     | typet ident is access ident ';'                  { (DAccess $2 $5, $1) }
      | typet ident is record champslist end record ';'  { (DRecord $2 $5, $1) }
      | identlist ':' type ';'                           { (DAssign $1 $3 Nothing, fstElemAnn $1) }
      | identlist ':' type ':=' expr ';'                 { (DAssign $1 $3 (Just $5), fstElemAnn $1) }
      | procedure ident maybeparams is decllist begin instrlist end maybeident ';'
-                                                        { (DProcedure $2 $3 $5 $7 $9, $1) }
+                {% if maybe True (\x -> fst x == fst $2) $9 then return (DProcedure $2 $3 $5 $7 $9, $1) else alexError' "Procedure name not equal" }
      | function ident maybeparams return type is decllist begin instrlist end maybeident ';'
-                                                        { (DFunction $2 $3 $5 $7 $9 $11, $1) }
+                {% if maybe True (\x -> fst x == fst $2) $11 then return (DFunction $2 $3 $5 $7 $9 $11, $1) else alexError' "Function name not equal" }
 
 maybeparams :: { Maybe (Ann Params AlexPosn) }
 maybeparams : {- empty -}  { Nothing }
@@ -202,11 +205,11 @@ maybeMode : {- empty -}  { Nothing }
           | in out       { Just (InOut, $1) }
 
 fichier :: { Ann Fichier AlexPosn }
-fichier : with adatextio ';' use adatextio ';' procedure ident is decllist begin instrlist end maybeident
-                { (Fichier $8 $10 $12 $14, $1) }
+fichier : with adatextio ';' use adatextio ';' procedure ident is decllist begin instrlist end maybeident ';'
+                {%if maybe True (\x -> fst x == fst $8) $14 then return (Fichier $8 $10 $12 $14, $1) else alexError' "procedure name not equal" }
 
 adatextio :: { () }
-adatextio : ident '.' ident {% if (identToStr $1) /= "Ada" && (identToStr $3) /= "Text_IO" then alexError' "Blehbleh" else return () }
+adatextio : ident '.' ident {% if (identToStr $1) /= "ada" && (identToStr $3) /= "text_io" then alexError' "Blehbleh" else return () }
 
 {
 
@@ -214,7 +217,7 @@ lexWrap :: (Token -> Alex a) -> Alex a
 lexWrap = (alexMonadScan' >>=)
 
 happyError :: Token -> Alex a
-happyError t = alexError' ("parse error: " ++ "blabla")
+happyError t = alexError' ("parse error: at token " ++ show t)
 
 parseExp :: String -> FilePath -> Either String (Ann Expr AlexPosn)
 parseExp s fp = runAlex' s fp parseExpn
@@ -224,7 +227,7 @@ parseFichier s fp = runAlex' s fp parseFichiern
 
 fstElemAnn :: NonEmptyList (Ann a b) -> b
 fstElemAnn (Last (_, x)) = x
-fstElemANn (Cons (_, x) _) = x
+fstElemAnn (Cons (_, x) _) = x
 
 identToStr :: Ann Ident b -> String
 identToStr (Ident s, _) = s

@@ -1,7 +1,8 @@
 module Main where
 import Parser
+import Data.Char (toLower)
 
 main :: IO ()
 main = do
     s <- getContents
-    print $ parseExp s "<stdin>"
+    print $ parseFichier (map toLower s) "<stdin>"

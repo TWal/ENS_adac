@@ -72,6 +72,8 @@ tokens :-
     "."                             { tok TokenDot }
     ":"                             { tok TokenColon }
     ","                             { tok TokenComma }
+    ".."                            { tok TokenDoubledot }
+    "character'val"                 { tok TokenCharval }
     -- identifier
     $alpha [$alpha $digit \_ ]*     { tok_string TokenIdent }
 
@@ -197,6 +199,8 @@ data Token =
     | TokenDot AlexPosn
     | TokenColon AlexPosn
     | TokenComma AlexPosn
+    | TokenDoubledot AlexPosn
+    | TokenCharval AlexPosn
     | TokenEOF AlexPosn
     deriving (Eq, Show)
 
