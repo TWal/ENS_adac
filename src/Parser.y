@@ -1,10 +1,11 @@
 {
-module Parser (parseExp) where
+module Parser (parseExp, parseFichier) where
 import Lexer
 import AST
 }
 
-%name parse expr
+%name parseExpn expr
+%name parseFichiern fichier
 %tokentype { Token }
 %error { happyError }
 %monad { Alex }
@@ -23,7 +24,7 @@ import AST
     for         { TokenFor $$ }
     new         { TokenNew $$ }
     record      { TokenRecord $$ }
-    type        { TokenType $$ }
+    typet        { TokenType $$ }
     begin       { TokenBegin $$ }
     function    { TokenFunction $$ }
     not         { TokenNot $$ }
@@ -113,10 +114,99 @@ exprlist :: { NonEmptyList (Ann Expr AlexPosn) }
 exprlist : expr               { Last $1 }
          | expr ',' exprlist  { Cons $1 $3 }
 
+instr :: { Ann Instr AlexPosn }
+instr : acces ':=' expr ';'                     { (IAssign $1 $3, snd $1) }
+      | ident ';'                               { (IIdent $1, snd $1) }
+      | ident '(' exprlist ')' ';'              { (ICall $1 $3, snd $1) }
+      | return ';'                              { (IReturn Nothing, $1) }
+      | return expr ';'                         { (IReturn (Just $2), $1) }
+      | begin instrlist end ';'                 { (IBegin $2, $1) }
+      | if expr then instrlist elsiflist maybeelse end if ';'
+                                                { (IIf $2 $4 $5 $6, $1) }
+      | for ident in maybereverse expr '.' '.' expr loop instrlist end loop ';'
+                                                { (IFor $2 $4 $5 $8 $10, $1) }
+      | while expr loop instrlist end loop ';'  { (IWhile $2 $4, $1) }
+
+instrlist :: { NonEmptyList (Ann Instr AlexPosn) }
+instrlist : instr            { Last $1 }
+          | instr instrlist  { Cons $1 $2 }
+
+elsiflist :: { [((Ann Expr AlexPosn), (NonEmptyList (Ann Instr AlexPosn)))] }
+elsiflist : {- empty -}                          { [] }
+          | elsif expr then instrlist elsiflist  { ($2, $4):$5 }
+
+maybeelse :: { (Maybe (NonEmptyList (Ann Instr AlexPosn))) }
+maybeelse : {- empty -}     { Nothing }
+          | else instrlist  { Just $2 }
+
+maybereverse :: { Bool }
+maybereverse : {- empty -}  { False }
+             | reverse      { True }
+
 acces :: { Ann Acces AlexPosn }
 acces : ident           { (AccesIdent $1, snd $1) }
       | expr '.' ident  { (AccesDot $1 $3, snd $1) }
 
+
+decl :: { Ann Decl AlexPosn }
+decl : typet ident ';'                                  { (DType $2, $1) }
+     | typet ident is access ident                      { (DAccess $2 $5, $1) }
+     | typet ident is record champslist end record ';'  { (DRecord $2 $5, $1) }
+     | identlist ':' type ';'                           { (DAssign $1 $3 Nothing, fstElemAnn $1) }
+     | identlist ':' type ':=' expr ';'                 { (DAssign $1 $3 (Just $5), fstElemAnn $1) }
+     | procedure ident maybeparams is decllist begin instrlist end maybeident ';'
+                                                        { (DProcedure $2 $3 $5 $7 $9, $1) }
+     | function ident maybeparams return type is decllist begin instrlist end maybeident ';'
+                                                        { (DFunction $2 $3 $5 $7 $9 $11, $1) }
+
+maybeparams :: { Maybe (Ann Params AlexPosn) }
+maybeparams : {- empty -}  { Nothing }
+            | params       { Just $1 }
+
+decllist :: { [Ann Decl AlexPosn] }
+decllist : {- empty -}    { [] }
+         | decl decllist  { $1:$2 }
+
+maybeident :: { Maybe (Ann Ident AlexPosn) }
+maybeident : {- empty -}  { Nothing }
+           | ident        { Just $1 }
+
+champslist :: { NonEmptyList (Ann Champs AlexPosn) }
+champslist : champs             { Last $1 }
+           | champs champslist  { Cons $1 $2 }
+
+identlist :: { NonEmptyList (Ann Ident AlexPosn) }
+identlist : ident                { Last $1 }
+          | ident ',' identlist  { Cons $1 $3 }
+
+champs :: { Ann Champs AlexPosn }
+champs : identlist ':' type ';'  { (Champs $1 $3, fstElemAnn $1) }
+
+type :: { Ann Type AlexPosn }
+type : ident         { (NoAccess $1, snd $1) }
+     | access ident  { (Access $2, $1) }
+
+params :: { Ann Params AlexPosn }
+params : '(' paramlist ')'  { (Params $2, $1) }
+
+param :: { Ann Param AlexPosn }
+param : identlist ':' maybemode type  { (Param $1 $3 $4, fstElemAnn $1) }
+
+paramlist :: { NonEmptyList (Ann Param AlexPosn) }
+paramlist : param                { Last $1 }
+          | param ';' paramlist  { Cons $1 $3 }
+
+maybemode :: { Maybe (Ann Mode AlexPosn) }
+maybeMode : {- empty -}  { Nothing }
+          | in           { Just (In, $1) }
+          | in out       { Just (InOut, $1) }
+
+fichier :: { Ann Fichier AlexPosn }
+fichier : with adatextio ';' use adatextio ';' procedure ident is decllist begin instrlist end maybeident
+                { (Fichier $8 $10 $12 $14, $1) }
+
+adatextio :: { () }
+adatextio : ident '.' ident {% if (identToStr $1) /= "Ada" && (identToStr $3) /= "Text_IO" then alexError' "Blehbleh" else return () }
 
 {
 
@@ -127,6 +217,16 @@ happyError :: Token -> Alex a
 happyError t = alexError' ("parse error: " ++ "blabla")
 
 parseExp :: String -> FilePath -> Either String (Ann Expr AlexPosn)
-parseExp s fp = runAlex' s fp parse
+parseExp s fp = runAlex' s fp parseExpn
+
+parseFichier :: String -> FilePath -> Either String (Ann Fichier AlexPosn)
+parseFichier s fp = runAlex' s fp parseFichiern
+
+fstElemAnn :: NonEmptyList (Ann a b) -> b
+fstElemAnn (Last (_, x)) = x
+fstElemANn (Cons (_, x) _) = x
+
+identToStr :: Ann Ident b -> String
+identToStr (Ident s, _) = s
 
 }

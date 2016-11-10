@@ -30,7 +30,7 @@ data Decl b =
     DType (Ann Ident b)
   | DAccess (Ann Ident b) (Ann Ident b)
   | DRecord (Ann Ident b) (NonEmptyList (Ann Champs b))
-  | DAssign (NonEmptyList (Ann Ident b)) (Ann Type b) (Maybe (Ann Maybe b))
+  | DAssign (NonEmptyList (Ann Ident b)) (Ann Type b) (Maybe (Ann Expr b))
   | DProcedure (Ann Ident b) (Maybe (Ann Params b)) [Ann Decl b]
         (NonEmptyList (Ann Instr b)) (Maybe (Ann Ident b))
   | DFunction (Ann Ident b) (Maybe (Ann Params b)) (Ann Type b) [Ann Decl b]
@@ -41,7 +41,7 @@ data Champs b = Champs (NonEmptyList (Ann Ident b)) (Ann Type b) deriving (Eq, S
 
 data Type b = NoAccess (Ann Ident b) | Access (Ann Ident b) deriving (Eq, Show)
 
-data Params b = NonEmptyList (Ann Param b) deriving (Eq, Show)
+data Params b = Params (NonEmptyList (Ann Param b)) deriving (Eq, Show)
 
 data Param b = Param (NonEmptyList (Ann Ident b)) (Maybe (Ann Mode b)) (Ann Type b) deriving (Eq, Show)
 
@@ -70,7 +70,7 @@ data Instr b =
   | IIf (Ann Expr b) (NonEmptyList (Ann Instr b))
       [((Ann Expr b), (NonEmptyList (Ann Instr b)))]
        (Maybe (NonEmptyList (Ann Instr b)))
-  | IFor (Ann Ident b) (Ann Expr b) (Ann Expr b) (NonEmptyList (Ann Instr b))
+  | IFor (Ann Ident b) Bool (Ann Expr b) (Ann Expr b) (NonEmptyList (Ann Instr b))
   | IWhile (Ann Expr b) (NonEmptyList (Ann Instr b))
   deriving (Eq, Show)
 
