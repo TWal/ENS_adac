@@ -1,9 +1,10 @@
 
 module Typer where
-import AST
-import Lexer
-import Data.Map (Map, (!))
-import qualified Data.Map as M
+import           AST
+import           Lexer
+import           Data.Map   (Map, (!))
+import qualified Data.Map   as M
+import           Data.Maybe
 import qualified Control.Monad.Trans.State.Strict as S
 
 data Pile a = a :^: Pile a | Bottom a
@@ -36,7 +37,7 @@ data CType = RValue Typed | RLValue Typed | LValue TypeClass
 data Context = Context
     { variables :: Map String CType
     , functions :: Map String Functionnal
-    , types     :: Map String (Maybe Typed)
+    , types     :: Map String Typed
     }
 type Env = S.StateT (Pile (String,Context)) (Either String)
 
@@ -124,7 +125,7 @@ addFun s t = do
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
-addTpe :: String -> Maybe Typed -> Env ()
+addTpe :: String -> Typed -> Env ()
 addTpe s t = do
     e <- S.get
     S.put $ update_head e
@@ -194,18 +195,49 @@ get_class t = TypeClass (tpf t) $ show t
         else fail $ "can't convert " ++ show t1 ++ " to " ++ show t2
 
 -------------- Getting the typing done ----------------------------------------
-type_file :: Fichier b -> Env TFichier
-type_file (Fichier (name, pos) decls instrs mnm2) = _
+showPos :: AlexPosn -> String
+showPos = show
 
-type_decls :: [Ann Decl b] -> Env TDecls
-type_decls _ = _
+lerror :: AlexPosn -> String -> Env a
+lerror p s = fail $ (showPos p) ++ " : " ++ s
 
-type_expr :: Expr b -> Env TPExpr
-type_expr _ = _
+merror :: AlexPosn -> String -> Maybe a -> Env a
+merror p s Nothing  = lerror p s
+merror p s (Just x) = return x
 
-type_access :: Acces b -> Env TAccess
-type_access _ = _
+fromI :: Ident b -> String
+fromI (Ident s) = s
 
-type_instr :: Instr b -> Env TInstr
-type_instr _ = _
+type_file :: Fichier AlexPosn -> Env TFichier
+type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
+    if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
+                      ++ name ++ " is renamed " ++ (fromI $ fst $ fromJust mnm2)
+             else return ()
+    undefined
+ where b = isNothing mnm2 || (name == (fromI $ fst $ fromJust mnm2))
+
+type_param :: Param AlexPosn -> Env TParams
+type_param (Param l md b) = undefined
+
+type_type :: Type AlexPosn -> Env Typed
+type_type (NoAccess (Ident nm,p)) = getTpe nm
+                                >>= merror p ("type " ++ nm ++ " not defined")
+type_type (Access (Ident nm,p))   = do
+    mt <- getTpe nm
+    t <- merror p ("type " ++ nm ++ " not defined") mt
+    case t of
+      TRecord _ r -> return $ TAccess nm r
+      _           -> lerror p $ "Can only access on records"
+
+type_decls :: [Ann Decl AlexPosn] -> Env TDecls
+type_decls _ = undefined
+
+type_expr :: Expr AlexPosn -> Env TPExpr
+type_expr _ = undefined
+
+type_access :: Acces AlexPosn -> Env TAccess
+type_access _ = undefined
+
+type_instr :: Instr AlexPosn -> Env TInstr
+type_instr _ = undefined
 
