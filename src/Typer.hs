@@ -2,9 +2,11 @@
 module Typer where
 import           AST
 import           Lexer
-import           Data.Map   (Map, (!))
-import qualified Data.Map   as M
+import           Data.Map      (Map, (!))
+import qualified Data.Map      as M
 import           Data.Maybe
+import           Data.List
+import qualified Control.Monad as CM
 import qualified Control.Monad.Trans.State.Strict as S
 
 data Pile a = a :^: Pile a | Bottom a
@@ -18,26 +20,29 @@ data TypeClass = TypeClass
 data Typed = TInteger
            | TCharacter
            | TBoolean
-           | TRecord String Recorded
-           | TAccess String Recorded
+           | TRecord String
+           | TAccess String
            | Typenull
 instance Eq Typed where
-    TInteger     == TInteger     = True
-    TCharacter   == TCharacter   = True
-    TBoolean     == TBoolean     = True
-    Typenull     == Typenull     = True
-    TRecord n1 _ == TRecord n2 _ = n1 == n2
-    TAccess n1 _ == TAccess n2 _ = n1 == n2
-    _            == _            = False
+    TInteger   == TInteger   = True
+    TCharacter == TCharacter = True
+    TBoolean   == TBoolean   = True
+    Typenull   == Typenull   = True
+    TRecord n1 == TRecord n2 = n1 == n2
+    TAccess n1 == TAccess n2 = n1 == n2
+    _          == _          = False
 data Functionnal = TFunction TParams Typed | TProcedure TParams
 data TParams = TParams (NonEmptyList (String,CType))
-data Recorded = Record (Map String Typed)
+data Recorded = Record (Map String Typed) | RAccess String | RNotDefined
+is_defined :: Recorded -> Bool
+is_defined RNotDefined = False
+is_defined _           = True
 
 data CType = RValue Typed | RLValue Typed | LValue TypeClass
 data Context = Context
     { variables :: Map String CType
     , functions :: Map String Functionnal
-    , types     :: Map String Typed
+    , types     :: Map String Recorded
     }
 type Env = S.StateT (Pile (String,Context)) (Either String)
 
@@ -53,12 +58,12 @@ instance Show CType where
     show (LValue t)  = "in "     ++ show t
     show (RLValue t) = "in out " ++ show t
 instance Show Typed where
-    show TInteger      = "Integer"
-    show TCharacter    = "Character"
-    show TBoolean      = "Bool"
-    show (TRecord n _) = "Record " ++ n
-    show (TAccess n _) = "Access " ++ n
-    show Typenull      = "Typenull"
+    show TInteger    = "Integer"
+    show TCharacter  = "Character"
+    show TBoolean    = "Bool"
+    show (TRecord n) = "Record " ++ n
+    show (TAccess n) = "Access " ++ n
+    show Typenull    = "Typenull"
 instance Show Functionnal where
     show (TFunction tp t) = "(" ++ show tp ++ " -> " ++ show t ++ ")"
     show (TProcedure tp)  = "(" ++ show tp ++ ")"
@@ -113,6 +118,7 @@ getFunC = mgetC functions
 getTpe  = mget  types
 getTpeC = mgetC types
 
+-- TODO : fail if adding an already present variable, functions or declared record
 addVar :: String -> CType -> Env ()
 addVar s t = do
     e <- S.get
@@ -125,7 +131,7 @@ addFun s t = do
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
-addTpe :: String -> Typed -> Env ()
+addTpe :: String -> Recorded -> Env ()
 addTpe s t = do
     e <- S.get
     S.put $ update_head e
@@ -149,7 +155,7 @@ pop_env = do
 -------------- Typed AST ------------------------------------------------------
 data TFichier = TFichier String TParams TDecls [TInstr]
 data TDecls = TDecls
-    { dtypes :: Map String Typed
+    { dtypes :: Map String Recorded
     , dfuns  :: Map String (Functionnal,NonEmptyList TInstr)
     , dvars  :: Map String (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
     }
@@ -181,8 +187,8 @@ data TInstr =
 null :: TypeClass
 null = TypeClass tpf "null"
  where tpf :: Typed -> Either String ()
-       tpf (TAccess _ _) = Right ()
-       tpf t             = fail $ show t ++ " has no null value"
+       tpf (TAccess _) = Right ()
+       tpf t           = fail $ show t ++ " has no null value"
 
 num :: TypeClass
 num = TypeClass tpf "numeric"
@@ -208,6 +214,12 @@ merror p s (Just x) = return x
 fromI :: Ident b -> String
 fromI (Ident s) = s
 
+non_empty_to_list :: NonEmptyList a -> [a]
+non_empty_to_list (Cons x xs) = x : non_empty_to_list xs
+non_empty_to_list (Last x)    = [x]
+
+
+
 type_file :: Fichier AlexPosn -> Env TFichier
 type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
     if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
@@ -216,27 +228,95 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
     undefined
  where b = isNothing mnm2 || (name == (fromI $ fst $ fromJust mnm2))
 
+
+
 type_param :: Param AlexPosn -> Env TParams
 type_param (Param l md b) = undefined
 
+
+
 type_type :: Type AlexPosn -> Env Typed
-type_type (NoAccess (Ident nm,p)) = getTpe nm
-                                >>= merror p ("type " ++ nm ++ " not defined")
-type_type (Access (Ident nm,p))   = do
-    mt <- getTpe nm
-    t <- merror p ("type " ++ nm ++ " not defined") mt
-    case t of
-      TRecord _ r -> return $ TAccess nm r
-      _           -> lerror p $ "Can only access on records"
+type_type (NoAccess (Ident nm,p)) = case nm of
+ "integer"   -> return TInteger
+ "character" -> return TCharacter
+ "boolean"   -> return TBoolean
+ _           -> do
+     mt <- getTpe nm
+     t  <- merror p ("type " ++ nm ++ " not declared") mt
+     if not (is_defined t) then lerror p $ "type " ++ nm ++ " not defined "
+     else return $ TRecord nm
+type_type (Access (Ident nm,p))   = case nm of
+ "integer"   -> lerror p "access only allowed on records, not integer"
+ "character" -> lerror p "access only allowed on records, not character"
+ "boolean"   -> lerror p "access only allowed on records, not boolean"
+ _           -> do
+     mt <- getTpe nm
+     t  <- merror p ("type " ++ nm ++ " not declared") mt
+     return $ TAccess nm
+
+
 
 type_decls :: [Ann Decl AlexPosn] -> Env TDecls
 type_decls _ = undefined
+ where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
+       td (DType (Ident s, p1),p2) tds = addt_if tds p1 s RNotDefined
+       td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = case s2 of
+           "integer"   -> lerror p3 "access only allowed on records, not integer"
+           "character" -> lerror p3 "access only allowed on records, not character"
+           "boolean"   -> lerror p3 "access only allowed on records, not boolean"
+           _           -> do
+               mt <- getTpe s2
+               t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
+               addt_if tds p1 s1 (RAccess s2)
+       td (DRecord (Ident nm, pn) lcs, pr) tds = do
+           r <- type_champs lcs
+           addt_if tds pr nm (Record r)
+       td (DAssign ids (tp, ptp) (Just e), pa) tds = do
+           t  <- type_type tp
+           ne <- type_expr e
+           CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
+               $ (RLValue t,Just $ Left ne)) tds
+               $ non_empty_to_list ids
 
-type_expr :: Expr AlexPosn -> Env TPExpr
+       -- TODO also add to environment
+       addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
+       addt_if tds p k e = if M.member k (dtypes tds)
+                           then lerror p $ k ++ " is already declared" -- Must not fail if RNotDeclared
+                           else return $ tds { dtypes = M.insert k e (dtypes tds) }
+       addv_if :: TDecls -> AlexPosn -> String
+               -> (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
+               -> Env TDecls
+       addv_if tds p k e = if M.member k (dvars tds)
+                           then lerror p $ k ++ " is already declared"
+                           else return $ tds { dvars = M.insert k e (dvars tds) }
+       addf_if :: TDecls -> AlexPosn -> String
+               -> (Functionnal,NonEmptyList TInstr) -> Env TDecls
+       addf_if tds p k e = if M.member k (dfuns tds)
+                           then lerror p $ k ++ " is already declared"
+                           else return $ tds { dfuns = M.insert k e (dfuns tds) }
+
+
+
+type_champs :: NonEmptyList (Ann Champs AlexPosn)
+            -> Env (Map String Typed)
+type_champs nl = CM.foldM add_if M.empty l
+ where flatten (Champs nl tp) = map (\x -> (x,tp)) $ non_empty_to_list nl
+       l = concat $ map (flatten . fst) $ non_empty_to_list nl
+       add_if mp ((Ident k, pk), (t, _)) =
+           if M.member k mp then lerror pk (k ++ " member declared twice")
+           else type_type t >>= (\e -> return $ M.insert k e mp)
+
+
+
+type_expr :: Ann Expr AlexPosn -> Env TPExpr
 type_expr _ = undefined
+
+
 
 type_access :: Acces AlexPosn -> Env TAccess
 type_access _ = undefined
+
+
 
 type_instr :: Instr AlexPosn -> Env TInstr
 type_instr _ = undefined
