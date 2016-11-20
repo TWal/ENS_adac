@@ -32,7 +32,7 @@ instance Eq Typed where
     TAccess n1 == TAccess n2 = n1 == n2
     _          == _          = False
 data Functionnal = TFunction TParams Typed | TProcedure TParams
-data TParams = TParams (NonEmptyList (String,CType))
+data TParams = TParams [(String,CType)]
 data Recorded = Record (Map String Typed) | RAccess String | RNotDefined
 is_defined :: Recorded -> Bool
 is_defined RNotDefined = False
@@ -48,9 +48,10 @@ type Env = S.StateT (Pile (String,Context)) (Either String)
 
 -------------- Outputing ------------------------------------------------------
 instance Show TParams where
-    show (TParams (Cons (nm,t) tps)) = nm ++ " : " ++ show t
-                                    ++ ", " ++ show tps
-    show (TParams (Last (nm,t)))     = nm ++ " : " ++ show t
+    show (TParams ((nm,t) : tps@(_:_))) = nm ++ " : " ++ show t
+                                 ++ ", " ++ show tps
+    show (TParams [(nm,t)])       = nm ++ " : " ++ show t
+    show (TParams [])             = ""
 instance Show TypeClass where
     show t = typename t
 instance Show CType where
@@ -218,6 +219,11 @@ non_empty_to_list :: NonEmptyList a -> [a]
 non_empty_to_list (Cons x xs) = x : non_empty_to_list xs
 non_empty_to_list (Last x)    = [x]
 
+-- Must not be called on empty list
+list_to_non_empty :: [a] -> NonEmptyList a
+list_to_non_empty (x : y : xs) = Cons x $ list_to_non_empty $ y : xs
+list_to_non_empty [x]          = Last x
+
 
 
 type_file :: Fichier AlexPosn -> Env TFichier
@@ -273,27 +279,80 @@ type_decls _ = undefined
            addt_if tds pr nm (Record r)
        td (DAssign ids (tp, ptp) (Just e), pa) tds = do
            t  <- type_type tp
-           ne <- type_expr e
+           ne <- type_expr e -- TODO check if ne is lvalue with compatible type
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
                $ (RLValue t,Just $ Left ne)) tds
                $ non_empty_to_list ids
+       td (DAssign ids (tp, ptp) Nothing, pa) tds = do
+           t  <- type_type tp
+           CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
+               $ (RLValue t,Nothing)) tds
+               $ non_empty_to_list ids
+       td (DProcedure (Ident nm, p) mprs dcls instrs mnm,ppr) tds = do
+           let nm2 = case mnm of
+                      Just (Ident x,px) -> (x,px)
+                      Nothing           -> (nm,ppr)
+           if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
+                              else return ()
+           params <- case mprs of
+                      Nothing  -> return []
+                      Just prs -> type_params prs
+           push_env nm
+           CM.forM params $ \(s,t) -> addVar s t -- Adding the parameters to
+                                                 -- the environment
+           addFun nm $ TProcedure $ TParams params -- Adding the procedure
+                                                   -- to the environment
+           type_decls dcls
+           li <- CM.mapM type_instr $ non_empty_to_list instrs
+           pop_env
+           addf_if tds ppr nm
+                   (TProcedure $ TParams params, list_to_non_empty li)
+       td (DFunction (Ident nm, pnm) mprs (rtp, ptp) dcls instrs mnm, pf) tds = do
+           let nm2 = case mnm of
+                      Just (Ident x,px) -> (x,px)
+                      Nothing           -> (nm,pf)
+           if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
+                              else return ()
+           params <- case mprs of
+                      Nothing  -> return []
+                      Just prs -> type_params prs
+           t <- type_type rtp
+           push_env nm
+           CM.forM params $ \(s,t) -> addVar s t -- Adding the parameters to
+                                                 -- the environment
+           addFun nm $ TFunction (TParams params) t -- Adding the procedure
+                                                    -- to the environment
+           type_decls dcls
+           li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
+           pop_env
+           addf_if tds pf nm
+                   (TFunction (TParams params) t, list_to_non_empty li)
 
-       -- TODO also add to environment
        addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
        addt_if tds p k e = if M.member k (dtypes tds)
-                           then lerror p $ k ++ " is already declared" -- Must not fail if RNotDeclared
-                           else return $ tds { dtypes = M.insert k e (dtypes tds) }
+                           then if not $ is_defined $ (dtypes tds) ! k
+                                then lerror p $ k ++ " is already declared"
+                                else do
+                                      updateTpe k e
+                                      return $ tds { dtypes = M.insert k e (dtypes tds) }
+                           else do
+                                 addTpe k e
+                                 return $ tds { dtypes = M.insert k e (dtypes tds) }
        addv_if :: TDecls -> AlexPosn -> String
                -> (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
                -> Env TDecls
        addv_if tds p k e = if M.member k (dvars tds)
                            then lerror p $ k ++ " is already declared"
-                           else return $ tds { dvars = M.insert k e (dvars tds) }
+                           else do
+                                 addVar k (fst e)
+                                 return $ tds { dvars = M.insert k e (dvars tds) }
        addf_if :: TDecls -> AlexPosn -> String
                -> (Functionnal,NonEmptyList TInstr) -> Env TDecls
        addf_if tds p k e = if M.member k (dfuns tds)
                            then lerror p $ k ++ " is already declared"
-                           else return $ tds { dfuns = M.insert k e (dfuns tds) }
+                           else do
+                                 addFun k (fst e)
+                                 return $ tds { dfuns = M.insert k e (dfuns tds) }
 
 
 
@@ -307,6 +366,31 @@ type_champs nl = CM.foldM add_if M.empty l
            else type_type t >>= (\e -> return $ M.insert k e mp)
 
 
+type_params :: Ann Params AlexPosn -> Env [(String,CType)]
+type_params (Params prs,pos) = do
+    nprs <- mapM tpr mprs
+    let dbl = has_double $ map fst nprs
+    case dbl of
+     Nothing -> return nprs
+     Just x  -> lerror pos $ x ++ " is used twice in argument list"
+ where tpr :: (Ann Ident AlexPosn, Maybe (Ann Mode AlexPosn), Ann Type AlexPosn)
+           -> Env (String,CType)
+       tpr ((Ident nm,pnm), md, (tp, ptp)) = do
+           t <- type_type tp
+           let ctp = case md of
+                      Just (In,_)    -> LValue  $ get_class t
+                      Just (InOut,_) -> RLValue $ t
+                      Nothing        -> LValue  $ get_class t
+           return (nm, ctp)
+       mzip :: a -> b -> [c] -> [(c,a,b)]
+       mzip x y l = map (\z -> (z,x,y)) l
+       from_param (Param nl x y,_) = mzip x y $ non_empty_to_list nl
+       mprs = concat $ map from_param $ non_empty_to_list prs
+       has_double :: Eq a => [a] -> Maybe a
+       has_double (x:xs) = if elem x xs then Just x else has_double xs
+       has_double []     = Nothing
+
+
 
 type_expr :: Ann Expr AlexPosn -> Env TPExpr
 type_expr _ = undefined
@@ -318,6 +402,9 @@ type_access _ = undefined
 
 
 
-type_instr :: Instr AlexPosn -> Env TInstr
+type_instr :: Ann Instr AlexPosn -> Env TInstr
 type_instr _ = undefined
+
+type_instr_typed :: Typed -> Ann Instr AlexPosn -> Env TInstr
+type_instr_typed _ _ = undefined
 
