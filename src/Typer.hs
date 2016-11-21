@@ -89,6 +89,8 @@ update_head (Bottom x) f = Bottom $ f x
 extract :: (a -> b) -> (s,a) -> (s,b)
 extract f (x, y) = (x, f y)
 
+findFromContextL :: String -> (String,Map String a) -> Maybe a
+findFromContextL s (_,mp) = if M.member s mp then Just $ mp ! s else Nothing
 findFromContext :: String -> Pile (String,Map String a) -> Maybe a
 findFromContext s ((_,mp) :^: xs) = if M.member s mp then Just $ mp ! s
                                                      else findFromContext s xs
@@ -107,33 +109,85 @@ findWithContext c s (Bottom (n,mp)) =
 
 mget :: (Context -> Map String a) -> String -> Env (Maybe a)
 mget ext s = S.get
-    >>= (\e -> return $ findFromContext s $ fmap (extract ext) e)
+    >>= \e -> return $ findFromContext s $ fmap (extract ext) e
 mgetC :: (Context -> Map String a) -> String -> String -> Env (Maybe a)
 mgetC ext c s = S.get
-    >>= (\e -> return $ findWithContext c s $ fmap (extract ext) e)
+    >>= \e -> return $ findWithContext c s $ fmap (extract ext) e
+mgetL :: (Context -> Map String a) -> String -> Env (Maybe a)
+mgetL ext s = S.get
+    >>= \(e:^:_) -> return $ findFromContextL s $ extract ext e
 
 getVar  = mget  variables
 getVarC = mgetC variables
+getVarL = mgetL variables
 getFun  = mget  functions
 getFunC = mgetC functions
+getFunL = mgetL functions
 getTpe  = mget  types
 getTpeC = mgetC types
+getTpeL = mgetL types
 
--- TODO : fail if adding an already present variable, functions or declared record
-addVar :: String -> CType -> Env ()
-addVar s t = do
+-- Shearch on the Pile
+hasVar = (CM.liftM $ isJust) . getVar
+hasFun = (CM.liftM $ isJust) . getFun
+hasTpe = (CM.liftM $ isJust) . getTpe
+hasName n = do
+    b1 <- hasVar n
+    b2 <- hasFun n
+    b3 <- hasTpe n
+    return $ b1 || b2 || b3
+-- Search in one specified context
+hasVarC c = (CM.liftM $ isJust) . (getVarC c)
+hasFunC c = (CM.liftM $ isJust) . (getFunC c)
+hasTpeC c = (CM.liftM $ isJust) . (getTpeC c)
+hasNameC c n = do
+    b1 <- hasVarC c n
+    b2 <- hasFunC c n
+    b3 <- hasTpeC c n
+    return $ b1 || b2 || b3
+-- Search on the top of the Pile
+hasVarL v = do
+    ((_,mp) :^: _) <- S.get
+    return $ M.member v $ variables mp
+hasFunL v = do
+    ((_,mp) :^: _) <- S.get
+    return $ M.member v $ functions mp
+hasTpeL v = do
+    ((_,mp) :^: _) <- S.get
+    return $ M.member v $ types mp
+hasNameL n = do
+    b1 <- hasVarL n
+    b2 <- hasFunL n
+    b3 <- hasTpeL n
+    return $ b1 || b2 || b3
+
+addVar :: String -> AlexPosn -> CType -> Env ()
+addVar s p t = do
+    b <- hasNameL s
+    if b then lerror p $ s ++ " is already used, can't create variable" else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { variables = M.insert s t (variables c) }
 
-addFun :: String -> Functionnal -> Env ()
-addFun s t = do
+addFun :: String -> AlexPosn -> Functionnal -> Env ()
+addFun s p t = do
+    b <- hasNameL s
+    if b then lerror p $ s ++ " is already used, can't create functionnal" else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
-addTpe :: String -> Recorded -> Env ()
-addTpe s t = do
+addTpe :: String -> AlexPosn -> Recorded -> Env ()
+addTpe s p t = do
+    -- TODO handle definition
+    b <- hasNameL s
+    if b then do
+        otp <- getTpeL s
+        case otp of
+         Nothing          -> return ()
+         Just RNotDefined -> return ()
+         _                ->lerror p $ s ++ " is already used, can't create type"
+    else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { types = M.insert s t (types c) }
@@ -236,11 +290,6 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
 
 
 
-type_param :: Param AlexPosn -> Env TParams
-type_param (Param l md b) = undefined
-
-
-
 type_type :: Type AlexPosn -> Env Typed
 type_type (NoAccess (Ident nm,p)) = case nm of
  "integer"   -> return TInteger
@@ -298,15 +347,14 @@ type_decls _ = undefined
                       Nothing  -> return []
                       Just prs -> type_params prs
            push_env nm
-           CM.forM params $ \(s,t) -> addVar s t -- Adding the parameters to
-                                                 -- the environment
-           addFun nm $ TProcedure $ TParams params -- Adding the procedure
-                                                   -- to the environment
+           CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
+                                                     -- the environment
+           addFun nm ppr $ TProcedure $ TParams $ map drop3 params -- Adding the procedure
            type_decls dcls
            li <- CM.mapM type_instr $ non_empty_to_list instrs
            pop_env
            addf_if tds ppr nm
-                   (TProcedure $ TParams params, list_to_non_empty li)
+                   (TProcedure $ TParams $ map drop3 params, list_to_non_empty li)
        td (DFunction (Ident nm, pnm) (Just prs) (rtp, ptp) dcls instrs mnm, pf) tds = do
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
@@ -316,15 +364,13 @@ type_decls _ = undefined
            params <- type_params prs
            t <- type_type rtp
            push_env nm
-           CM.forM params $ \(s,t) -> addVar s t -- Adding the parameters to
-                                                 -- the environment
-           addFun nm $ TFunction (TParams params) t -- Adding the function
-                                                    -- to the environment
+           CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
+           addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
            pop_env
            addf_if tds pf nm
-                   (TFunction (TParams params) t, list_to_non_empty li)
+                   (TFunction (TParams $ map drop3 params) t, list_to_non_empty li)
        td (DFunction (Ident nm, pnm) Nothing (rtp, ptp) dcls instrs mnm, pf) tds = do
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
@@ -333,22 +379,24 @@ type_decls _ = undefined
                               else return ()
            t <- type_type rtp
            push_env nm
-           addVar nm $ LValue $ get_class t -- Adding the function
+           addVar nm pf $ LValue $ get_class t -- Adding the function
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
            pop_env
            addv_if tds pf nm
                (LValue $ get_class t, Just $ Right $ list_to_non_empty li)
 
+       drop3 :: (a,b,c) -> (a,b)
+       drop3 (x,y,z) = (x,y)
        addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
        addt_if tds p k e = if M.member k (dtypes tds)
                            then if not $ is_defined $ (dtypes tds) ! k
                                 then lerror p $ k ++ " is already declared"
                                 else do
-                                      updateTpe k e
+                                      updateTpe k p e
                                       return $ tds { dtypes = M.insert k e (dtypes tds) }
                            else do
-                                 addTpe k e
+                                 addTpe k p e
                                  return $ tds { dtypes = M.insert k e (dtypes tds) }
        addv_if :: TDecls -> AlexPosn -> String
                -> (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
@@ -356,14 +404,14 @@ type_decls _ = undefined
        addv_if tds p k e = if M.member k (dvars tds)
                            then lerror p $ k ++ " is already declared"
                            else do
-                                 addVar k (fst e)
+                                 addVar k p (fst e)
                                  return $ tds { dvars = M.insert k e (dvars tds) }
        addf_if :: TDecls -> AlexPosn -> String
                -> (Functionnal,NonEmptyList TInstr) -> Env TDecls
        addf_if tds p k e = if M.member k (dfuns tds)
                            then lerror p $ k ++ " is already declared"
                            else do
-                                 addFun k (fst e)
+                                 addFun k p (fst e)
                                  return $ tds { dfuns = M.insert k e (dfuns tds) }
 
 
@@ -378,22 +426,23 @@ type_champs nl = CM.foldM add_if M.empty l
            else type_type t >>= (\e -> return $ M.insert k e mp)
 
 
-type_params :: Ann Params AlexPosn -> Env [(String,CType)]
+type_params :: Ann Params AlexPosn -> Env [(String,CType,AlexPosn)]
 type_params (Params prs,pos) = do
     nprs <- mapM tpr mprs
-    let dbl = has_double $ map fst nprs
+    let dbl = has_double $ map fst3 nprs
     case dbl of
      Nothing -> return nprs
      Just x  -> lerror pos $ x ++ " is used twice in argument list"
  where tpr :: (Ann Ident AlexPosn, Maybe (Ann Mode AlexPosn), Ann Type AlexPosn)
-           -> Env (String,CType)
+           -> Env (String,CType,AlexPosn)
        tpr ((Ident nm,pnm), md, (tp, ptp)) = do
            t <- type_type tp
            let ctp = case md of
                       Just (In,_)    -> LValue  $ get_class t
                       Just (InOut,_) -> RLValue $ t
                       Nothing        -> LValue  $ get_class t
-           return (nm, ctp)
+           return (nm, ctp, pnm)
+       fst3 (x,y,z) = x
        mzip :: a -> b -> [c] -> [(c,a,b)]
        mzip x y l = map (\z -> (z,x,y)) l
        from_param (Param nl x y,_) = mzip x y $ non_empty_to_list nl
