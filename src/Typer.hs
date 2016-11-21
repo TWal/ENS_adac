@@ -33,7 +33,9 @@ is_defined :: Recorded -> Bool
 is_defined RNotDefined = False
 is_defined _           = True
 
-data CType = RValue Typed | RLValue Typed | LValue Typed
+data CType = CType Typed Bool Bool
+is_lvalue (CType _ b _) = b
+is_rvalue (CType _ _ b) = b
 data Context = Context
     { variables :: Map String CType
     , functions :: Map String Functionnal
@@ -48,9 +50,9 @@ instance Show TParams where
     show (TParams [(nm,t)])       = nm ++ " : " ++ show t
     show (TParams [])             = ""
 instance Show CType where
-    show (RValue t)  = "out "    ++ show t
-    show (LValue t)  = "in "     ++ show t
-    show (RLValue t) = "in out " ++ show t
+    show (CType t False True)  = "in "     ++ show t
+    show (CType t True  False) = "out "    ++ show t
+    show (CType t True  True)  = "in out " ++ show t
 instance Show Typed where
     show TInteger    = "Integer"
     show TCharacter  = "Character"
@@ -172,7 +174,6 @@ addFun s p t = do
 
 addTpe :: String -> AlexPosn -> Recorded -> Env ()
 addTpe s p t = do
-    -- TODO handle definition
     b <- hasNameL s
     if b then do
         otp <- getTpeL s
@@ -184,7 +185,6 @@ addTpe s p t = do
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { types = M.insert s t (types c) }
-updateTpe = addTpe
 
 empty_context :: Context
 empty_context = Context M.empty M.empty M.empty
@@ -302,17 +302,21 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
            r <- type_champs lcs
            addt_if tds pr nm (Record r)
-       td (DAssign ids (tp, ptp) (Just e), pa) tds = do
+       td (DAssign ids (tp, ptp) (Just e@(_,pe)), pa) tds = do
            t  <- type_type tp
-           ne <- type_expr e -- TODO check if ne is lvalue with compatible type
-           undefined
+           ne@(_,te) <- type_expr e
+           case (t,te) of
+            (_,CType _ _ False)            -> lerror pe  $ show t  ++ " is not an rvalue"
+            (TAccess _,CType TypeNull _ _) -> return ()
+            (_, CType t2 _ _)              -> if t == t2 then return ()
+                else lerror pe $ show t2 ++ " is not compatible with " ++ show t
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
-               $ (RLValue t,Just $ Left ne)) tds
+               $ (CType t True True,Just $ Left ne)) tds
                $ non_empty_to_list ids
        td (DAssign ids (tp, ptp) Nothing, pa) tds = do
            t  <- type_type tp
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
-               $ (RLValue t,Nothing)) tds
+               $ (CType t True True,Nothing)) tds
                $ non_empty_to_list ids
        td (DProcedure (Ident nm, p) mprs dcls instrs mnm,ppr) tds = do
            let nm2 = case mnm of
@@ -356,12 +360,12 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
                               else return ()
            t <- type_type rtp
            push_env nm
-           addVar nm pf $ LValue t -- Adding the function
+           addVar nm pf $ CType t False True-- Adding the function
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
            pop_env
            addv_if tds pf nm
-               (LValue t, Just $ Right $ list_to_non_empty li)
+               (CType t False True, Just $ Right $ list_to_non_empty li)
 
        empty_tdecls = TDecls M.empty M.empty M.empty
        drop3 :: (a,b,c) -> (a,b)
@@ -371,7 +375,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
                            then if not $ is_defined $ (dtypes tds) ! k
                                 then lerror p $ k ++ " is already declared"
                                 else do
-                                      updateTpe k p e
+                                      addTpe k p e
                                       return $ tds { dtypes = M.insert k e (dtypes tds) }
                            else do
                                  addTpe k p e
@@ -416,9 +420,9 @@ type_params (Params prs,pos) = do
        tpr ((Ident nm,pnm), md, (tp, ptp)) = do
            t <- type_type tp
            let ctp = case md of
-                      Just (In,_)    -> LValue  t
-                      Just (InOut,_) -> RLValue $ t
-                      Nothing        -> LValue  t
+                      Just (In,_)    -> CType t False True
+                      Just (InOut,_) -> CType t True  True
+                      Nothing        -> CType t False True
            return (nm, ctp, pnm)
        fst3 (x,y,z) = x
        mzip :: a -> b -> [c] -> [(c,a,b)]
@@ -440,20 +444,14 @@ type_access :: Acces AlexPosn -> Env (TAccess,CType)
 type_access (AccesIdent (Ident s,p)) = do
     v <- getVar s 
     case v of
-     Nothing          -> lerror p $ s ++ " is not defined"
-     Just t@(LValue (TAccess s))  -> return (AccessFull s, t)
-     Just t@(RValue (TAccess s))  -> return (AccessFull s, t)
-     Just t@(RLValue (TAccess s)) -> return (AccessFull s, t)
-     Just _                       -> lerror p $ s ++ " is not an access"
+     Nothing                         -> lerror p $ s ++ " is not defined"
+     Just t@(CType (TAccess s) _ _)  -> return (AccessFull s, t)
+     Just _                          -> lerror p $ s ++ " is not an access"
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
-     LValue (TAccess s)  -> get_sub s pe f pf >>= \x -> return $ LValue  x
-     LValue (TRecord s)  -> get_sub s pe f pf >>= \x -> return $ LValue  x
-     RLValue (TAccess s) -> get_sub s pe f pf >>= \x -> return $ RLValue x
-     RLValue (TRecord s) -> get_sub s pe f pf >>= \x -> return $ RLValue x
-     RValue (TAccess s)  -> get_sub s pe f pf >>= \x -> return $ RValue  x
-     RValue (TRecord s)  -> get_sub s pe f pf >>= \x -> return $ RValue  x
+     CType (TAccess s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1 b2
+     CType (TRecord s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1 b2
      _                   -> lerror pe $ "expression does not evaluate to a record"
     return (AccessPart te f, rtp)
  where get_sub :: String -> AlexPosn -> String -> AlexPosn -> Env Typed
