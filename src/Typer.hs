@@ -307,26 +307,38 @@ type_decls _ = undefined
            pop_env
            addf_if tds ppr nm
                    (TProcedure $ TParams params, list_to_non_empty li)
-       td (DFunction (Ident nm, pnm) mprs (rtp, ptp) dcls instrs mnm, pf) tds = do
+       td (DFunction (Ident nm, pnm) (Just prs) (rtp, ptp) dcls instrs mnm, pf) tds = do
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
                       Nothing           -> (nm,pf)
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
-           params <- case mprs of
-                      Nothing  -> return []
-                      Just prs -> type_params prs
+           params <- type_params prs
            t <- type_type rtp
            push_env nm
            CM.forM params $ \(s,t) -> addVar s t -- Adding the parameters to
                                                  -- the environment
-           addFun nm $ TFunction (TParams params) t -- Adding the procedure
+           addFun nm $ TFunction (TParams params) t -- Adding the function
                                                     -- to the environment
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
            pop_env
            addf_if tds pf nm
                    (TFunction (TParams params) t, list_to_non_empty li)
+       td (DFunction (Ident nm, pnm) Nothing (rtp, ptp) dcls instrs mnm, pf) tds = do
+           let nm2 = case mnm of
+                      Just (Ident x,px) -> (x,px)
+                      Nothing           -> (nm,pf)
+           if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
+                              else return ()
+           t <- type_type rtp
+           push_env nm
+           addVar nm $ LValue $ get_class t -- Adding the function
+           type_decls dcls
+           li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
+           pop_env
+           addv_if tds pf nm
+               (LValue $ get_class t, Just $ Right $ list_to_non_empty li)
 
        addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
        addt_if tds p k e = if M.member k (dtypes tds)
