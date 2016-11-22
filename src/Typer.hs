@@ -458,7 +458,99 @@ type_params (Params prs,pos) = do
 
 
 type_expr :: Ann Expr AlexPosn -> Env TPExpr
-type_expr _ = undefined
+type_expr (EInt i,_)  = return (TEInt i,  CType TInteger   False True)
+type_expr (EChar c,_) = return (TEChar c, CType TCharacter False True)
+type_expr (EBool b,_) = return (TEBool b, CType TBoolean   False True)
+type_expr (EAcces (a,pa),_) = type_access a >>= \(ta,t) -> return (TEAccess ta,t)
+type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
+    ne1@(_,cte1@(CType te1 _ b1)) <- type_expr e1
+    ne2@(_,cte2@(CType te2 _ b2)) <- type_expr e2
+    if not b1 then lerror pe1 "is not an rvalue"
+    else if not b2 then lerror pe2 "is not an rvalue"
+    else return ()
+    if b `elem` [Add, Subtract, Multiply, Divide, Rem,
+                 Lower, LowerEqual, Greater, GreaterEqual]
+        then if te1 /= TInteger
+                 then lerror pe1 $ "expected integer, got " ++ show te1
+             else if te2 /= TInteger
+                 then lerror pe2 $ "expected integer, got " ++ show te2
+             else return (TEBinop (cvbnp b) ne1 ne2, CType TInteger False True)
+    else do
+      if b `elem` [And, AndThen, Or, OrElse]
+        then if te1 /= TBoolean
+                 then lerror pe1 $ "expected boolean, got " ++ show te1
+             else if te2 /= TBoolean
+                 then lerror pe2 $ "expected boolean, got " ++ show te2
+             else return ()
+      else    if is_access te1   && te2 == TypeNull then return ()
+         else if te1 == TypeNull && is_access te2   then return ()
+         else if te1 == te2                         then return ()
+         else lerror peb $ "can't compare " ++ show te1 ++ " and " ++ show te2
+      return (TEBinop (cvbnp b) ne1 ne2, CType TBoolean False True)
+ where is_access (TAccess _) = True
+       is_access _           = False
+       cvbnp :: Binop AlexPosn -> Binop ()
+       cvbnp Equal        = Equal
+       cvbnp NotEqual     = NotEqual
+       cvbnp Lower        = Lower
+       cvbnp LowerEqual   = LowerEqual
+       cvbnp Greater      = Greater
+       cvbnp GreaterEqual = GreaterEqual
+       cvbnp Add          = Add
+       cvbnp Subtract     = Subtract
+       cvbnp Multiply     = Multiply
+       cvbnp Divide       = Divide
+       cvbnp Rem          = Rem
+       cvbnp And          = And
+       cvbnp AndThen      = AndThen
+       cvbnp Or           = Or
+       cvbnp OrElse       = OrElse
+type_expr (EUnop (Not, pu) e@(_,pe), pun) = do
+    ne@(_,cte@(CType te _ b)) <- type_expr e
+    if not b then lerror pe "is not rvalue" else return ()
+    if te /= TBoolean then lerror pe $ "expecting boolean, got " ++ show te
+    else return (TEUnop Not ne, CType TBoolean False True)
+type_expr (EUnop (Negate, pu) e@(_,pe), pun) = do
+    ne@(_,cte@(CType te _ b)) <- type_expr e
+    if not b then lerror pe "is not rvalue" else return ()
+    if te /= TInteger then lerror pe $ "expecting integer, got " ++ show te
+    else return (TEUnop Negate ne, CType TInteger False True)
+type_expr (ENew (Ident r,pr), pe) = do
+    mt <- getTpe r
+    case mt of
+        Nothing         -> lerror pr $ "type " ++ r ++ " is not defined"
+        Just (Record _) -> return ()
+        Just t2         -> lerror pr $ "expected defined record"
+    return (TENew r, CType (TRecord r) False True)
+type_expr (ECharval e@(_,pe), pc) = do
+    ne@(_,(CType te _ b)) <- type_expr e
+    if not b then lerror pe "is not rvalue" else return ()
+    if te /= TCharacter then lerror pe $ "expecting character, got " ++ show te
+    else return (TECharval ne, CType TInteger False True)
+type_expr (ECall (Ident f,pf) params, pc) = do
+    nf <- getFun f
+    case nf of
+     Nothing             -> lerror pf $ f ++ " is not declared as a function"
+     Just (TProcedure _) -> lerror pc $ f ++ " is a procedure, not a function"
+     Just (TFunction (TParams prs) tp) -> do
+          let cprs = non_empty_to_list params
+          if length cprs == length prs then return ()
+          else lerror pc $ "function " ++ f ++ " expects " ++ show (length prs)
+                        ++ " arguments, " ++ show (length cprs) ++ " given"
+          tprs <- CM.mapM cmppr $ zip cprs prs
+          return (TECall f $ list_to_non_empty tprs, CType tp False True)
+ where cmppr :: (Ann Expr AlexPosn, (String,CType)) -> Env TPExpr
+       cmppr (e@(_,pe),(s,CType t o i)) = do
+           ne@(_,(CType te b1 b2)) <- type_expr e
+           if i && not b2 then lerror pe "expecting a rvalue for in parameter"
+           else if o && not b1 then lerror pe "expecting a lvalue for out parameter"
+           else return ()
+           if is_access t && te == TypeNull then return ne
+           else if t == te                  then return ne
+           else lerror pe $ "expected " ++ show t ++ ", got " ++ show te ++ " for " ++ s
+       is_access :: Typed -> Bool
+       is_access (TAccess _) = True
+       is_access _           = False
 
 
 
