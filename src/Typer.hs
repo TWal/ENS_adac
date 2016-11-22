@@ -28,6 +28,9 @@ instance Eq Typed where
     TAccess n1 == TAccess n2 = n1 == n2
     TypeNull   == TypeNull   = True
     _          == _          = False
+is_access :: Typed -> Bool
+is_access (TAccess _) = True
+is_access _           = False
 data Functionnal = TFunction TParams Typed | TProcedure TParams
 data TParams = TParams [(String,CType)]
 data Recorded = Record (Map String Typed) | RAccess String | RNotDefined
@@ -487,9 +490,7 @@ type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
          else if te1 == te2                         then return ()
          else lerror peb $ "can't compare " ++ show te1 ++ " and " ++ show te2
       return (TEBinop (cvbnp b) ne1 ne2, CType TBoolean False True)
- where is_access (TAccess _) = True
-       is_access _           = False
-       cvbnp :: Binop AlexPosn -> Binop ()
+ where cvbnp :: Binop AlexPosn -> Binop ()
        cvbnp Equal        = Equal
        cvbnp NotEqual     = NotEqual
        cvbnp Lower        = Lower
@@ -539,18 +540,16 @@ type_expr (ECall (Ident f,pf) params, pc) = do
                         ++ " arguments, " ++ show (length cprs) ++ " given"
           tprs <- CM.mapM cmppr $ zip cprs prs
           return (TECall f $ list_to_non_empty tprs, CType tp False True)
- where cmppr :: (Ann Expr AlexPosn, (String,CType)) -> Env TPExpr
-       cmppr (e@(_,pe),(s,CType t o i)) = do
-           ne@(_,(CType te b1 b2)) <- type_expr e
-           if i && not b2 then lerror pe "expecting a rvalue for in parameter"
-           else if o && not b1 then lerror pe "expecting a lvalue for out parameter"
-           else return ()
-           if is_access t && te == TypeNull then return ne
-           else if t == te                  then return ne
-           else lerror pe $ "expected " ++ show t ++ ", got " ++ show te ++ " for " ++ s
-       is_access :: Typed -> Bool
-       is_access (TAccess _) = True
-       is_access _           = False
+
+cmppr :: (Ann Expr AlexPosn, (String,CType)) -> Env TPExpr
+cmppr (e@(_,pe),(s,CType t o i)) = do
+    ne@(_,(CType te b1 b2)) <- type_expr e
+    if i && not b2 then lerror pe "expecting a rvalue for in parameter"
+    else if o && not b1 then lerror pe "expecting a lvalue for out parameter"
+    else return ()
+    if is_access t && te == TypeNull then return ne
+    else if t == te                  then return ne
+    else lerror pe $ "expected " ++ show t ++ ", got " ++ show te ++ " for " ++ s
 
 
 
@@ -558,9 +557,8 @@ type_access :: Acces AlexPosn -> Env (TAccess,CType)
 type_access (AccesIdent (Ident s,p)) = do
     v <- getVar s 
     case v of
-     Nothing                         -> lerror p $ s ++ " is not defined"
-     Just t@(CType (TAccess s) _ _)  -> return (AccessFull s, t)
-     Just _                          -> lerror p $ s ++ " is not an access"
+     Nothing -> lerror p $ s ++ " is not defined"
+     Just t  -> return (AccessFull s, t)
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
@@ -582,7 +580,60 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
 
 
 type_instr :: Ann Instr AlexPosn -> Env TInstr
+type_instr (IAssign (a, pa) e@(_, pe), pia) = do
+    ne@(_, CType te _ b) <- type_expr e
+    if not b then lerror pe $ "expecting a rvalue" else return ()
+    (na,CType ta b2 _) <- type_access a
+    if not b2 then lerror pa $ "expecting a lvalue" else return ()
+    if is_access ta && te == TypeNull then return $ TIAssign na ne
+    else if ta == te then return $ TIAssign na ne
+    else lerror pia $ "cannot assign a " ++ show te ++ " to a " ++ show ta
+type_instr (IIdent (Ident f, pf), pii) = do
+    mv <- getFun f
+    case mv of
+     Nothing -> lerror pf $ "no known procedure " ++ f
+     Just (TFunction _ _) -> lerror pf $ f ++ " is a function, not a procedure"
+     Just (TProcedure (TParams [])) -> return $ TIIdent f
+     Just (TProcedure (TParams _))  -> lerror pii $ "procedure " ++ f
+                                                 ++ " expects parameters"
+type_instr (ICall (Ident f, pf) params, pic) = do
+    mv <- getFun f
+    case mv of
+     Nothing -> lerror pf $ "no known procedure " ++ f
+     Just (TFunction _ _) -> lerror pf $ f ++ " is a function, not a procedure"
+     Just (TProcedure (TParams []))  -> lerror pic $ "procedure " ++ f
+                                                  ++ " expects no parameters"
+     Just (TProcedure (TParams rpr)) -> do
+         let lpr = non_empty_to_list params
+         if length rpr == length lpr then return ()
+         else lerror pic $ f ++ " expects " ++ show (length rpr) ++ " parameters ,"
+                        ++ show (length lpr) ++ " given"
+         mpr <- CM.mapM cmppr $ zip lpr rpr
+         return $ TICall f $ list_to_non_empty mpr
+type_instr (IReturn _,p) = lerror p "cannot return in unit instruction"
+type_instr (IBegin instrs, pib) = do
+    li <- mapM type_instr $ non_empty_to_list instrs
+    return $ TIBegin $ list_to_non_empty li
+type_instr (IIf e l lxs ml, pif) = do
+    (ne,nl) <- type_if (e,l)
+    nlxs    <- CM.mapM type_if lxs
+    nml     <- case ml of
+                Nothing -> return Nothing
+                Just l2 -> do
+                    nl2 <- CM.mapM type_instr $ non_empty_to_list l2
+                    return $ Just $ list_to_non_empty nl2
+    return $ TIIf (list_to_non_empty ((ne,nl) : nlxs)) nml
+ where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
+               -> Env (TPExpr, NonEmptyList TInstr)
+       type_if (e@(_,pe), l) = do
+           ne@(_,CType te _ b) <- type_expr e
+           if not b then lerror pe "expecting a rvalue" else return ()
+           if te == TBoolean then return ()
+           else lerror pe $ "expecting a boolean, got a " ++ show te
+           li <- CM.mapM type_instr $ non_empty_to_list l
+           return (ne, list_to_non_empty li)
 type_instr _ = undefined
+
 
 type_instr_typed :: Typed -> Ann Instr AlexPosn -> Env TInstr
 type_instr_typed _ _ = undefined
