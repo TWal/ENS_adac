@@ -4,6 +4,8 @@ import           AST
 import           Lexer
 import           Data.Map      (Map, (!))
 import qualified Data.Map      as M
+import           Data.Set      (Set)
+import qualified Data.Set      as St
 import           Data.Maybe
 import           Data.List
 import qualified Control.Monad as CM
@@ -40,6 +42,7 @@ data Context = Context
     { variables :: Map String CType
     , functions :: Map String Functionnal
     , types     :: Map String Recorded
+    , declared  :: Set String
     }
 type Env = S.StateT (Pile (String,Context)) (Either String)
 
@@ -155,6 +158,14 @@ hasNameL n = do
     b2 <- hasFunL n
     b3 <- hasTpeL n
     return $ b1 || b2 || b3
+-- Search is only local
+is_declared :: String -> Env Bool
+is_declared n = S.get >>= \((_,s):^:_) -> return $ St.member n $ declared s
+declare :: String -> Env ()
+declare n = do
+    e <- S.get
+    S.put $ update_head e
+          $ extract $ \c -> c { declared = St.insert n (declared c) }
 
 addVar :: String -> AlexPosn -> CType -> Env ()
 addVar s p t = do
@@ -166,16 +177,18 @@ addVar s p t = do
 
 addFun :: String -> AlexPosn -> Functionnal -> Env ()
 addFun s p t = do
-    b <- hasNameL s
-    if b then lerror p $ s ++ " is already used, can't create functionnal" else return ()
+    b1 <- hasNameL s
+    b2 <- is_declared s
+    if b1 || b2 then lerror p $ s ++ " is already used, can't create functionnal" else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
 addTpe :: String -> AlexPosn -> Recorded -> Env ()
 addTpe s p t = do
-    b <- hasNameL s
-    if b then do
+    b1 <- hasNameL s
+    b2 <- is_declared s
+    if b1 || b2 then do
         otp <- getTpeL s
         case otp of
          Nothing          -> return ()
@@ -187,7 +200,7 @@ addTpe s p t = do
           $ extract $ \c -> c { types = M.insert s t (types c) }
 
 empty_context :: Context
-empty_context = Context M.empty M.empty M.empty
+empty_context = Context M.empty M.empty M.empty St.empty
 
 push_env :: String -> Env ()
 push_env s = do
@@ -272,6 +285,8 @@ type_type (NoAccess (Ident nm,p)) = case nm of
  "character" -> return TCharacter
  "boolean"   -> return TBoolean
  _           -> do
+     b <- is_declared nm
+     if b then lerror p $ nm ++ " is not a type name" else return ()
      mt <- getTpe nm
      t  <- merror p ("type " ++ nm ++ " not declared") mt
      if not (is_defined t) then lerror p $ "type " ++ nm ++ " not defined "
@@ -281,6 +296,8 @@ type_type (Access (Ident nm,p))   = case nm of
  "character" -> lerror p "access only allowed on records, not character"
  "boolean"   -> lerror p "access only allowed on records, not boolean"
  _           -> do
+     b <- is_declared nm
+     if b then lerror p $ nm ++ " is not a type name" else return ()
      mt <- getTpe nm
      t  <- merror p ("type " ++ nm ++ " not declared") mt
      return $ TAccess nm
@@ -327,10 +344,10 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            params <- case mprs of
                       Nothing  -> return []
                       Just prs -> type_params prs
+           addFun nm ppr $ TProcedure $ TParams $ map drop3 params -- Adding the procedure
            push_env nm
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
                                                      -- the environment
-           addFun nm ppr $ TProcedure $ TParams $ map drop3 params -- Adding the procedure
            type_decls dcls
            li <- CM.mapM type_instr $ non_empty_to_list instrs
            pop_env
@@ -343,10 +360,11 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
            params <- type_params prs
+           declare nm
            t <- type_type rtp
+           addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            push_env nm
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
-           addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
            pop_env
@@ -358,11 +376,14 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
                       Nothing           -> (nm,pf)
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
+           declare nm
            t <- type_type rtp
-           push_env nm
+           push_env ""
            addVar nm pf $ CType t False True-- Adding the function
+           push_env nm
            type_decls dcls
            li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
+           pop_env
            pop_env
            addv_if tds pf nm
                (CType t False True, Just $ Right $ list_to_non_empty li)
@@ -393,7 +414,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
        addf_if tds p k e = if M.member k (dfuns tds)
                            then lerror p $ k ++ " is already declared"
                            else do
-                                 addFun k p (fst e)
+                                 -- The functionnal has already been added
                                  return $ tds { dfuns = M.insert k e (dfuns tds) }
 
 
@@ -418,6 +439,7 @@ type_params (Params prs,pos) = do
  where tpr :: (Ann Ident AlexPosn, Maybe (Ann Mode AlexPosn), Ann Type AlexPosn)
            -> Env (String,CType,AlexPosn)
        tpr ((Ident nm,pnm), md, (tp, ptp)) = do
+           declare nm
            t <- type_type tp
            let ctp = case md of
                       Just (In,_)    -> CType t False True
