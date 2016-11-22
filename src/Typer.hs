@@ -632,7 +632,27 @@ type_instr (IIf e l lxs ml, pif) = do
            else lerror pe $ "expecting a boolean, got a " ++ show te
            li <- CM.mapM type_instr $ non_empty_to_list l
            return (ne, list_to_non_empty li)
-type_instr _ = undefined
+type_instr (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
+    ne1@(_, CType te1 _ b1) <- type_expr e1
+    ne2@(_, CType te2 _ b2) <- type_expr e2
+    if not b1 then lerror pe1 "expecting a rvalue" 
+    else if not b2 then lerror pe2 "expecting a rvalue" 
+    else return ()
+    if te1 /= TInteger then lerror pe1 $ "expecting a integer, got a " ++ show te1
+    else if te2 /= TInteger then lerror pe2 $ "expecting a integer, got a" ++ show te2
+    else return ()
+    push_env "for#"
+    addVar v pv $ CType TInteger False True
+    li <- CM.mapM type_instr $ non_empty_to_list instrs
+    pop_env
+    return $ TIFor v b ne1 ne2 $ list_to_non_empty li
+type_instr (IWhile e@(_, pe) instrs, pw) = do
+    ne@(_,CType te _ b) <- type_expr e
+    if not b then lerror pe "expecting a rvalue"
+    else if te /= TBoolean then lerror pe $ "expecting a boolean, got a " ++ show te
+    else return ()
+    li <- CM.mapM type_instr $ non_empty_to_list instrs
+    return $ TIWhile ne $ list_to_non_empty li
 
 
 type_instr_typed :: Typed -> Ann Instr AlexPosn -> Env TInstr
