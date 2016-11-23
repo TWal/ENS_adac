@@ -584,8 +584,8 @@ type_access (AccesIdent (Ident s,p)) = do
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
-     CType (TAccess s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1 b2
-     CType (TRecord s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1 b2
+     CType (TAccess s) _  b2 -> get_sub s pe f pf >>= \x -> return $ CType x True b2
+     CType (TRecord s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
      _                   -> lerror pe $ "expression does not evaluate to a record"
     return (AccessPart te f, rtp)
  where get_sub :: String -> AlexPosn -> String -> AlexPosn -> Env Typed
