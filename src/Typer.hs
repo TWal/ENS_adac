@@ -485,6 +485,7 @@ type_expr :: Ann Expr AlexPosn -> Env TPExpr
 type_expr (EInt i,_)  = return (TEInt i,  CType TInteger   False True)
 type_expr (EChar c,_) = return (TEChar c, CType TCharacter False True)
 type_expr (EBool b,_) = return (TEBool b, CType TBoolean   False True)
+type_expr (ENull, _)  = return (TENull,   CType TypeNull   False True)
 type_expr (EAcces (a,pa),_) = type_access a >>= \(ta,t) -> return (TEAccess ta,t)
 type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
     ne1@(_,cte1@(CType te1 _ b1)) <- type_expr e1
@@ -809,7 +810,7 @@ type_program :: Fichier AlexPosn -> Either String TFichier
 type_program f = S.evalStateT (type_file f) (Bottom ("#", e))
  where e = Context vars funs M.empty St.empty
        funs = M.fromList
-              [ ("Put", TProcedure $ TParams [("o", CType TCharacter False True)])
+              [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
               ]
        vars = M.empty
 
