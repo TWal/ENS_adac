@@ -201,8 +201,7 @@ addVar s p t = do
 addFun :: String -> AlexPosn -> Functionnal -> Env ()
 addFun s p t = do
     b1 <- hasNameL s
-    b2 <- is_declared s
-    if b1 || b2 then lerror p $ s ++ " is already used, can't create functionnal" else return ()
+    if b1 then lerror p $ s ++ " is already used, can't create functionnal" else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
@@ -348,6 +347,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
                t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
                addt_if tds p1 s1 (RAccess s2)
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
+           addTpe nm pn RNotDefined
            r <- type_champs lcs
            addt_if tds pr nm (Record r)
        td (DAssign ids (tp, ptp) (Just e@(_,pe)), pa) tds = do
