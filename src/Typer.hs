@@ -299,7 +299,7 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
              else return ()
     addFun name pos $ TProcedure $ TParams []
     push_env name
-    tdcls  <- type_decls decls
+    tdcls  <- type_decls decls pos
     tistrs <- CM.mapM type_instr $ non_empty_to_list instrs
     pop_env
     return $ TFichier name tdcls $ list_to_non_empty tistrs
@@ -335,13 +335,19 @@ type_type (Access (Ident nm,p))   = case nm of
 
 
 
-type_decls :: [Ann Decl AlexPosn] -> Env TDecls
-type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
+type_decls :: [Ann Decl AlexPosn] -> AlexPosn -> Env TDecls
+type_decls dcls p = do
+    r <- CM.foldM (flip td) empty_tdecls dcls
+    let nm = M.filter (not . is_defined) $ dtypes r
+    if not $ M.null nm then lerror p $ "type " ++ show (head $ M.elems nm)
+                                    ++ " declared but not defined"
+    else return ()
+    return r
  where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
        td (DType (Ident s, p1),p2) tds = do
            mt <- getTpe s
            if isNothing mt then return ()
-           else if not (is_defined $ fromJust mt) then return ()
+           else if is_defined $ fromJust mt then return ()
            else lerror p2 $ "type " ++ s ++ " is already declared"
            addt_if tds p1 s RNotDefined
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = case s2 of
@@ -385,7 +391,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            push_env nm
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
                                                      -- the environment
-           type_decls dcls
+           type_decls dcls ppr
            li <- CM.mapM type_instr $ non_empty_to_list instrs
            pop_env
            addf_if tds ppr nm
@@ -402,7 +408,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            push_env nm
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
-           type_decls dcls
+           type_decls dcls pf
            li <- type_instr_typed t instrs
            pop_env
            addf_if tds pf nm
@@ -418,7 +424,7 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            push_env ""
            addVar nm pf $ CType t False True-- Adding the function
            push_env nm
-           type_decls dcls
+           type_decls dcls pf
            li <- type_instr_typed t instrs
            pop_env
            pop_env
