@@ -1,5 +1,18 @@
 
-module Typer where
+module Typer ( Typed       (..)
+             , Functionnal (..)
+             , TParams     (..)
+             , Recorded    (..)
+             , CType       (..)
+             , TFichier    (..)
+             , TDecls      (..)
+             , TPExpr
+             , TExpr       (..)
+             , TAccess     (..)
+             , TInstr      (..)
+             , type_program
+             )
+    where
 import           AST
 import           Lexer
 import           Data.Map      (Map, (!))
@@ -788,4 +801,10 @@ type_ityped t (Last (_,p)) =
     lerror p "control reach end of function"
 
 
+
+type_program :: Fichier AlexPosn -> Either String TFichier
+type_program f = S.evalStateT (type_file f) (Bottom ("#", e))
+ where e = Context vars funs M.empty St.empty
+       vars = M.empty -- TODO standart variables
+       funs = M.empty -- TODO standarts functions
 
