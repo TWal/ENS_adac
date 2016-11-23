@@ -544,7 +544,7 @@ type_expr (ENew (Ident r,pr), pe) = do
         Nothing         -> lerror pr $ "type " ++ r ++ " is not defined"
         Just (Record _) -> return ()
         Just t2         -> lerror pr $ "expected defined record"
-    return (TENew r, CType (TRecord r) False True)
+    return (TENew r, CType (TAccess r) False True)
 type_expr (ECharval e@(_,pe), pc) = do
     ne@(_,(CType te _ b)) <- type_expr e
     if not b then lerror pe "is not rvalue" else return ()
