@@ -340,7 +340,8 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
  where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
        td (DType (Ident s, p1),p2) tds = do
            mt <- getTpe s
-           if isJust mt && not (is_defined $ fromJust mt) then return ()
+           if isNothing mt then return ()
+           else if not (is_defined $ fromJust mt) then return ()
            else lerror p2 $ "type " ++ s ++ " is already declared"
            addt_if tds p1 s RNotDefined
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = case s2 of
