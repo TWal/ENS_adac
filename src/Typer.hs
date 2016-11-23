@@ -1,4 +1,3 @@
- -- TODO standarts functions
 module Typer ( Typed       (..)
              , Functionnal (..)
              , TParams     (..)
@@ -424,8 +423,8 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
        drop3 (x,y,z) = (x,y)
        addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
        addt_if tds p k e = if M.member k (dtypes tds)
-                           then if not $ is_defined $ (dtypes tds) ! k
-                                then lerror p $ k ++ " is already declared"
+                           then if is_defined $ (dtypes tds) ! k
+                                then lerror p $ k ++ " is already defined"
                                 else do
                                       addTpe k p e
                                       return $ tds { dtypes = M.insert k e (dtypes tds) }
