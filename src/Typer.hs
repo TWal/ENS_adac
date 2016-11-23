@@ -79,6 +79,10 @@ instance Show Typed where
     show (TRecord n) = "Record " ++ n
     show (TAccess n) = "Access " ++ n
     show TypeNull    = "Null"
+instance Show Recorded where
+    show (Record mp) = "Record " ++ (show $ M.toList mp)
+    show (RAccess t) = "RAccess " ++ t
+    show RNotDefined = "RNotDefined"
 instance Show Functionnal where
     show (TFunction tp t) = "(" ++ show tp ++ " -> " ++ show t ++ ")"
     show (TProcedure tp)  = "(" ++ show tp ++ ")"
@@ -314,7 +318,10 @@ type_type (NoAccess (Ident nm,p)) = case nm of
      mt <- getTpe nm
      t  <- merror p ("type " ++ nm ++ " not declared") mt
      if not (is_defined t) then lerror p $ "type " ++ nm ++ " not defined "
-     else return $ TRecord nm
+     else case t of
+           Record _    -> return $ TRecord nm
+           RAccess x   -> return $ TAccess x
+           RNotDefined -> lerror p $ nm ++ " is defined but not declared"
 type_type (Access (Ident nm,p))   = case nm of
  "integer"   -> lerror p "access only allowed on records, not integer"
  "character" -> lerror p "access only allowed on records, not character"
@@ -596,7 +603,7 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
          Just (Record mp) -> if not $ M.member f mp
             then lerror pf $ "record " ++ s ++ " has no member " ++ f
             else return $ mp ! f
-         Just (RAccess mp) -> lerror pf $ "access have no subtypes"
+         Just (RAccess mp) -> lerror pf $ "access " ++ s ++ " has no subtypes"
          Just RNotDefined  -> lerror pe $ s ++ " is declared but not defined"
 
 
