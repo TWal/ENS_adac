@@ -217,7 +217,7 @@ pop_env = do
     return $ phead e
 
 -------------- Typed AST ------------------------------------------------------
-data TFichier = TFichier String TParams TDecls [TInstr]
+data TFichier = TFichier String TDecls (NonEmptyList TInstr)
 data TDecls = TDecls
     { dtypes :: Map String Recorded
     , dfuns  :: Map String (Functionnal,NonEmptyList TInstr)
@@ -277,7 +277,12 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
     if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
                       ++ name ++ " is renamed " ++ (fromI $ fst $ fromJust mnm2)
              else return ()
-    undefined
+    addFun name pos $ TProcedure $ TParams []
+    push_env name
+    tdcls  <- type_decls decls
+    tistrs <- CM.mapM type_instr $ non_empty_to_list instrs
+    pop_env
+    return $ TFichier name tdcls $ list_to_non_empty tistrs
  where b = isNothing mnm2 || (name == (fromI $ fst $ fromJust mnm2))
 
 
@@ -369,10 +374,10 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            push_env nm
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
            type_decls dcls
-           li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
+           li <- type_instr_typed t instrs
            pop_env
            addf_if tds pf nm
-                   (TFunction (TParams $ map drop3 params) t, list_to_non_empty li)
+                   (TFunction (TParams $ map drop3 params) t, li)
        td (DFunction (Ident nm, pnm) Nothing (rtp, ptp) dcls instrs mnm, pf) tds = do
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
@@ -385,11 +390,11 @@ type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
            addVar nm pf $ CType t False True-- Adding the function
            push_env nm
            type_decls dcls
-           li <- CM.mapM (type_instr_typed t) $ non_empty_to_list instrs
+           li <- type_instr_typed t instrs
            pop_env
            pop_env
            addv_if tds pf nm
-               (CType t False True, Just $ Right $ list_to_non_empty li)
+               (CType t False True, Just $ Right li)
 
        empty_tdecls = TDecls M.empty M.empty M.empty
        drop3 :: (a,b,c) -> (a,b)
@@ -580,7 +585,10 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
 
 
 type_instr :: Ann Instr AlexPosn -> Env TInstr
-type_instr (IAssign (a, pa) e@(_, pe), pia) = do
+type_instr = type_instr_g Nothing
+
+type_instr_g :: Maybe Typed -> Ann Instr AlexPosn -> Env TInstr
+type_instr_g _ (IAssign (a, pa) e@(_, pe), pia) = do
     ne@(_, CType te _ b) <- type_expr e
     if not b then lerror pe $ "expecting a rvalue" else return ()
     (na,CType ta b2 _) <- type_access a
@@ -588,7 +596,7 @@ type_instr (IAssign (a, pa) e@(_, pe), pia) = do
     if is_access ta && te == TypeNull then return $ TIAssign na ne
     else if ta == te then return $ TIAssign na ne
     else lerror pia $ "cannot assign a " ++ show te ++ " to a " ++ show ta
-type_instr (IIdent (Ident f, pf), pii) = do
+type_instr_g _ (IIdent (Ident f, pf), pii) = do
     mv <- getFun f
     case mv of
      Nothing -> lerror pf $ "no known procedure " ++ f
@@ -596,7 +604,7 @@ type_instr (IIdent (Ident f, pf), pii) = do
      Just (TProcedure (TParams [])) -> return $ TIIdent f
      Just (TProcedure (TParams _))  -> lerror pii $ "procedure " ++ f
                                                  ++ " expects parameters"
-type_instr (ICall (Ident f, pf) params, pic) = do
+type_instr_g _ (ICall (Ident f, pf) params, pic) = do
     mv <- getFun f
     case mv of
      Nothing -> lerror pf $ "no known procedure " ++ f
@@ -610,17 +618,28 @@ type_instr (ICall (Ident f, pf) params, pic) = do
                         ++ show (length lpr) ++ " given"
          mpr <- CM.mapM cmppr $ zip lpr rpr
          return $ TICall f $ list_to_non_empty mpr
-type_instr (IReturn _,p) = lerror p "cannot return in unit instruction"
-type_instr (IBegin instrs, pib) = do
-    li <- mapM type_instr $ non_empty_to_list instrs
+type_instr_g Nothing  (IReturn Nothing,p) = return $ TIReturn Nothing
+type_instr_g (Just t) (IReturn Nothing,p) =
+    lerror p $ "expecting " ++ show t ++ " in return, got a unit"
+type_instr_g Nothing  (IReturn _,p) =
+    lerror p "cannot return in unit instruction"
+type_instr_g (Just t) (IReturn (Just me),pe) = do
+    ne@(_, CType te _ b) <- type_expr me
+    if not b then lerror pe "expecting a rvalue"
+    else if is_access t && te == TypeNull then return ()
+    else if t == te then return ()
+    else lerror pe $ "expecting a " ++ show t ++ ", got a " ++ show te
+    return $ TIReturn $ Just ne
+type_instr_g t (IBegin instrs, pib) = do
+    li <- mapM (type_instr_g t) $ non_empty_to_list instrs
     return $ TIBegin $ list_to_non_empty li
-type_instr (IIf e l lxs ml, pif) = do
+type_instr_g t (IIf e l lxs ml, pif) = do
     (ne,nl) <- type_if (e,l)
     nlxs    <- CM.mapM type_if lxs
     nml     <- case ml of
                 Nothing -> return Nothing
                 Just l2 -> do
-                    nl2 <- CM.mapM type_instr $ non_empty_to_list l2
+                    nl2 <- CM.mapM (type_instr_g t) $ non_empty_to_list l2
                     return $ Just $ list_to_non_empty nl2
     return $ TIIf (list_to_non_empty ((ne,nl) : nlxs)) nml
  where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
@@ -630,9 +649,9 @@ type_instr (IIf e l lxs ml, pif) = do
            if not b then lerror pe "expecting a rvalue" else return ()
            if te == TBoolean then return ()
            else lerror pe $ "expecting a boolean, got a " ++ show te
-           li <- CM.mapM type_instr $ non_empty_to_list l
+           li <- CM.mapM (type_instr_g t) $ non_empty_to_list l
            return (ne, list_to_non_empty li)
-type_instr (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
+type_instr_g t (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
     ne1@(_, CType te1 _ b1) <- type_expr e1
     ne2@(_, CType te2 _ b2) <- type_expr e2
     if not b1 then lerror pe1 "expecting a rvalue" 
@@ -643,18 +662,130 @@ type_instr (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
     else return ()
     push_env "for#"
     addVar v pv $ CType TInteger False True
-    li <- CM.mapM type_instr $ non_empty_to_list instrs
+    li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     pop_env
     return $ TIFor v b ne1 ne2 $ list_to_non_empty li
-type_instr (IWhile e@(_, pe) instrs, pw) = do
+type_instr_g t (IWhile e@(_, pe) instrs, pw) = do
     ne@(_,CType te _ b) <- type_expr e
     if not b then lerror pe "expecting a rvalue"
     else if te /= TBoolean then lerror pe $ "expecting a boolean, got a " ++ show te
     else return ()
-    li <- CM.mapM type_instr $ non_empty_to_list instrs
+    li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     return $ TIWhile ne $ list_to_non_empty li
 
+type_instr_typed :: Typed -> NonEmptyList (Ann Instr AlexPosn) -> Env (NonEmptyList TInstr)
+type_instr_typed t l = do
+    (r,m) <- type_ityped t l
+    case m of
+     Nothing -> return r
+     Just p  -> lerror p "control reach end of function"
 
-type_instr_typed :: Typed -> Ann Instr AlexPosn -> Env TInstr
-type_instr_typed _ _ = undefined
+-- Will remove unreachable instructions, but still type them
+type_ityped :: Typed -> NonEmptyList (Ann Instr AlexPosn)
+            -> Env (NonEmptyList TInstr, Maybe AlexPosn)
+type_ityped t (Cons i@(IAssign _ _,_) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis,p)
+type_ityped t (Cons i@(IIdent _,_) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis, p)
+type_ityped t (Cons i@(ICall _ _,_) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis, p)
+type_ityped t (Cons (IReturn (Just me),pe) is) = do
+    ne@(_, CType te _ b) <- type_expr me
+    if not b then lerror pe "expecting a rvalue"
+    else if is_access t && te == TypeNull then return ()
+    else if t == te then return ()
+    else lerror pe $ "expecting a " ++ show t ++ ", got a " ++ show te
+    type_ityped t is -- Discard following instructions, they can't be reached
+                     -- Yet type them to raise errors
+    return (Last $ TIReturn $ Just ne, Nothing)
+type_ityped t (Cons (IReturn Nothing, p) _) =
+    lerror p $ "expecting " ++ show t ++ " in return, got a unit"
+type_ityped t (Cons (IBegin iis,pi) is) = do
+    (niis,m) <- type_ityped t iis
+    (nis,np) <- type_ityped t is
+    case m of
+     Nothing -> return (Last $ TIBegin niis, Nothing)
+     Just _  -> return (Cons (TIBegin niis) nis, np)
+type_ityped t (Cons i@(IIf _ _ _ Nothing,_) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis,p)
+type_ityped t (Cons (IIf e l lxs (Just l2), pif) is) = do
+    ((ne,nl),p1) <- type_if (e,l)
+    nlxs         <- CM.mapM type_if lxs
+    (nml,p2)     <- type_ityped t l2
+    -- p :: Maybe (Maybe AlexPosn), but we don't as we discard the value if
+    -- it's a Just
+    let p = listToMaybe $ filter isJust $ p1 : p2 : map snd nlxs
+    case p of
+     Nothing -> return ( Last (TIIf (list_to_non_empty ((ne,nl) : (map fst nlxs)))
+                                    (Just nml))
+                       , Nothing)
+     Just _ -> do
+         (nis,np) <- type_ityped t is
+         return ( Cons (TIIf (list_to_non_empty ((ne,nl) : (map fst nlxs)))
+                             (Just nml))
+                  nis
+                , np)
+ where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
+               -> Env ((TPExpr, NonEmptyList TInstr), Maybe AlexPosn)
+       type_if (e@(_,pe), l) = do
+           ne@(_,CType te _ b) <- type_expr e
+           if not b then lerror pe "expecting a rvalue" else return ()
+           if te == TBoolean then return ()
+           else lerror pe $ "expecting a boolean, got a " ++ show te
+           (li,p) <- type_ityped t l
+           return ((ne, li), p)
+type_ityped t (Cons i@(IFor _ _ _ _ _,pf) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis, p)
+type_ityped t (Cons i@(IWhile _ _,pw) is) = do
+    ni      <- type_instr_g (Just t) i
+    (nis,p) <- type_ityped t is
+    return (Cons ni nis, p)
+-- Only a valid return, an ending block or an ending if can go last
+type_ityped t (Last (IReturn Nothing,p)) =
+    lerror p $ "expecting " ++ show t ++ " in return, got a unit"
+type_ityped t (Last (IReturn (Just me),pe)) = do
+    ne@(_, CType te _ b) <- type_expr me
+    if not b then lerror pe "expecting a rvalue"
+    else if is_access t && te == TypeNull then return ()
+    else if t == te then return ()
+    else lerror pe $ "expecting a " ++ show t ++ ", got a " ++ show te
+    return (Last $ TIReturn $ Just ne, Nothing)
+type_ityped t (Last (IBegin iis,pi)) = do
+    (niis,m) <- type_ityped t iis
+    return (Last $ TIBegin niis, m)
+type_ityped t (Last (IIf e l lxs (Just l2), pif)) = do
+    ((ne,nl),p1) <- type_if (e,l)
+    nlxs         <- CM.mapM type_if lxs
+    (nml,p2)     <- type_ityped t l2
+    -- p :: Maybe (Maybe AlexPosn), but we don't as we discard the value if
+    -- it's a Just
+    let p = listToMaybe $ filter isJust $ p1 : p2 : map snd nlxs
+    case p of
+     Nothing -> return ( Last (TIIf (list_to_non_empty ((ne,nl) : (map fst nlxs)))
+                                    (Just nml))
+                       , Nothing)
+     Just np -> lerror (fromJust np) "control reach end of function"
+ where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
+               -> Env ((TPExpr, NonEmptyList TInstr), Maybe AlexPosn)
+       type_if (e@(_,pe), l) = do
+           ne@(_,CType te _ b) <- type_expr e
+           if not b then lerror pe "expecting a rvalue" else return ()
+           if te == TBoolean then return ()
+           else lerror pe $ "expecting a boolean, got a " ++ show te
+           (li,p) <- type_ityped t l
+           return ((ne, li), p)
+type_ityped t (Last (_,p)) =
+    lerror p "control reach end of function"
+
+
 
