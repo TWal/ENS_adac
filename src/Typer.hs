@@ -1,4 +1,4 @@
-
+ -- TODO standarts functions
 module Typer ( Typed       (..)
              , Functionnal (..)
              , TParams     (..)
@@ -129,7 +129,7 @@ mgetC ext c s = S.get
     >>= \e -> return $ findWithContext c s $ fmap (extract ext) e
 mgetL :: (Context -> Map String a) -> String -> Env (Maybe a)
 mgetL ext s = S.get
-    >>= \(e:^:_) -> return $ findFromContextL s $ extract ext e
+    >>= \e -> return $ findFromContextL s $ extract ext $ phead e
 
 getVar  = mget  variables
 getVarC = mgetC variables
@@ -161,13 +161,16 @@ hasNameC c n = do
     return $ b1 || b2 || b3
 -- Search on the top of the Pile
 hasVarL v = do
-    ((_,mp) :^: _) <- S.get
+    e <- S.get
+    let (_,mp) = phead e
     return $ M.member v $ variables mp
 hasFunL v = do
-    ((_,mp) :^: _) <- S.get
+    e <- S.get
+    let (_,mp) = phead e
     return $ M.member v $ functions mp
 hasTpeL v = do
-    ((_,mp) :^: _) <- S.get
+    e <- S.get
+    let (_,mp) = phead e
     return $ M.member v $ types mp
 hasNameL n = do
     b1 <- hasVarL n
@@ -176,7 +179,7 @@ hasNameL n = do
     return $ b1 || b2 || b3
 -- Search is only local
 is_declared :: String -> Env Bool
-is_declared n = S.get >>= \((_,s):^:_) -> return $ St.member n $ declared s
+is_declared n = S.get >>= \e -> return $ St.member n $ declared $ snd $ phead e
 declare :: String -> Env ()
 declare n = do
     e <- S.get
@@ -805,6 +808,8 @@ type_ityped t (Last (_,p)) =
 type_program :: Fichier AlexPosn -> Either String TFichier
 type_program f = S.evalStateT (type_file f) (Bottom ("#", e))
  where e = Context vars funs M.empty St.empty
-       vars = M.empty -- TODO standart variables
-       funs = M.empty -- TODO standarts functions
+       funs = M.fromList
+              [ ("Put", TProcedure $ TParams [("o", CType TCharacter False True)])
+              ]
+       vars = M.empty
 
