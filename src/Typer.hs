@@ -207,15 +207,17 @@ addFun s p t = do
 
 addTpe :: String -> AlexPosn -> Recorded -> Env ()
 addTpe s p t = do
-    b1 <- hasNameL s
-    b2 <- is_declared s
-    if b1 || b2 then do
+    b1 <- hasVarL s
+    b2 <- hasFunL s
+    b3 <- is_declared s
+    if b1 || b2 || b3 then
+        lerror p $ s ++ " is already used, can't create type"
+    else do
         otp <- getTpeL s
         case otp of
          Nothing          -> return ()
          Just RNotDefined -> return ()
          _                ->lerror p $ s ++ " is already used, can't create type"
-    else return ()
     e <- S.get
     S.put $ update_head e
           $ extract $ \c -> c { types = M.insert s t (types c) }
@@ -336,7 +338,11 @@ type_type (Access (Ident nm,p))   = case nm of
 type_decls :: [Ann Decl AlexPosn] -> Env TDecls
 type_decls dcls = CM.foldM (flip td) empty_tdecls dcls
  where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
-       td (DType (Ident s, p1),p2) tds = addt_if tds p1 s RNotDefined
+       td (DType (Ident s, p1),p2) tds = do
+           mt <- getTpe s
+           if isJust mt && not (is_defined $ fromJust mt) then return ()
+           else lerror p2 $ "type " ++ s ++ " is already declared"
+           addt_if tds p1 s RNotDefined
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = case s2 of
            "integer"   -> lerror p3 "access only allowed on records, not integer"
            "character" -> lerror p3 "access only allowed on records, not character"
