@@ -64,15 +64,15 @@ import AST
     '..'       { TokenDoubledot $$ }
     charval     { TokenCharval $$ }
 
-%left '..'
+%nonassoc '..'
 %left or ORELSE
 %left and ANDTHEN
-%left not
-%left '=' '/='
-%left '>' '>=' '<' '<='
+%nonassoc not
+%nonassoc '=' '/='
+%nonassoc '>' '>=' '<' '<='
 %left '+' '-'
 %left '*' '/'  rem
-%left NEG
+%nonassoc NEG
 %left '.'
 
 %%
@@ -80,38 +80,35 @@ import AST
 ident :: { Ann Ident AlexPosn }
 ident : identt { (Ident (snd $1), fst $1) }
 
-binop :: { Ann Binop AlexPosn }
-binop : '='                     { (Equal, $1) }
-      | '/='                    { (NotEqual, $1) }
-      | '<'                     { (Lower, $1) }
-      | '<='                    { (LowerEqual, $1) }
-      | '>'                     { (Greater, $1) }
-      | '>='                    { (GreaterEqual, $1) }
-      | '+'                     { (Add, $1) }
-      | '-'                     { (Subtract, $1) }
-      | '*'                     { (Multiply, $1) }
-      | '/'                     { (Divide, $1) }
-      | rem                     { (Rem, $1) }
-      | and                     { (And, $1) }
-      | and then %prec ANDTHEN  { (AndThen, $1) }
-      | or                      { (Or, $1) }
-      | or else %prec ORELSE    { (OrElse, $1) }
-
 expr :: { Ann Expr AlexPosn }
-expr : int                     {% if (snd $1) > 2^31 then alexError' "integer too large" else return (EInt (snd $1), fst $1) }
-     | char                    { (EChar (snd $1), fst $1) }
-     | acces                   { (EAcces $1, snd $1) }
-     | true                    { (EBool True, $1) }
-     | false                   { (EBool False, $1) }
-     | null                    { (ENull, $1) }
-     | '(' expr ')'            { $2 }
-     | acces                   { (EAcces $1, snd $1) }
-     | expr binop expr         { (EBinop $2 $1 $3, snd $1) }
-     | not expr                { (EUnop (Not, $1) $2, $1) }
-     | '-' expr %prec NEG      { (EUnop (Negate, $1) $2, $1) }
-     | new ident               { (ENew $2, $1) }
-     | ident '(' exprlist ')'  { (ECall $1 $3, snd $1) }
-     | charval '(' expr ')'    { (ECharval $3, $1) }
+expr : int                               {% if (snd $1) > 2^31 then alexError' "integer too large" else return (EInt (snd $1), fst $1) }
+     | char                              { (EChar (snd $1), fst $1) }
+     | acces                             { (EAcces $1, snd $1) }
+     | true                              { (EBool True, $1) }
+     | false                             { (EBool False, $1) }
+     | null                              { (ENull, $1) }
+     | '(' expr ')'                      { $2 }
+     | acces                             { (EAcces $1, snd $1) }
+     | expr '=' expr                     { (EBinop (Equal, $2) $1 $3, snd $1) }
+     | expr '/=' expr                    { (EBinop (NotEqual, $2) $1 $3, snd $1) }
+     | expr '<' expr                     { (EBinop (Lower, $2) $1 $3, snd $1) }
+     | expr '<=' expr                    { (EBinop (LowerEqual, $2) $1 $3, snd $1) }
+     | expr '>' expr                     { (EBinop (Greater, $2) $1 $3, snd $1) }
+     | expr '>=' expr                    { (EBinop (GreaterEqual, $2) $1 $3, snd $1) }
+     | expr '+' expr                     { (EBinop (Add, $2) $1 $3, snd $1) }
+     | expr '-' expr                     { (EBinop (Subtract, $2) $1 $3, snd $1) }
+     | expr '*' expr                     { (EBinop (Multiply, $2) $1 $3, snd $1) }
+     | expr '/' expr                     { (EBinop (Divide, $2) $1 $3, snd $1) }
+     | expr rem expr                     { (EBinop (Rem, $2) $1 $3, snd $1) }
+     | expr and expr                     { (EBinop (And, $2) $1 $3, snd $1) }
+     | expr and then expr %prec ANDTHEN  { (EBinop (AndThen, $2) $1 $4, snd $1) }
+     | expr or expr                      { (EBinop (Or, $2) $1 $3, snd $1) }
+     | expr or else expr %prec ORELSE    { (EBinop (OrElse, $2) $1 $4, snd $1) }
+     | not expr                          { (EUnop (Not, $1) $2, $1) }
+     | '-' expr %prec NEG                { (EUnop (Negate, $1) $2, $1) }
+     | new ident                         { (ENew $2, $1) }
+     | ident '(' exprlist ')'            { (ECall $1 $3, snd $1) }
+     | charval '(' expr ')'              { (ECharval $3, $1) }
 
 exprlist :: { NonEmptyList (Ann Expr AlexPosn) }
 exprlist : expr               { Last $1 }
