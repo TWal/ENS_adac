@@ -525,7 +525,9 @@ type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
                  then lerror pe1 $ "expected integer, got " ++ show te1
              else if te2 /= TInteger
                  then lerror pe2 $ "expected integer, got " ++ show te2
-             else return (TEBinop (cvbnp b) ne1 ne2, CType TInteger False True)
+             else if b `elem` [Add, Subtract, Multiply, Divide, Rem]
+                  then return (TEBinop (cvbnp b) ne1 ne2, CType TInteger False True)
+                  else return (TEBinop (cvbnp b) ne1 ne2, CType TBoolean False True)
     else do
       if b `elem` [And, AndThen, Or, OrElse]
         then if te1 /= TBoolean
@@ -574,8 +576,8 @@ type_expr (ENew (Ident r,pr), pe) = do
 type_expr (ECharval e@(_,pe), pc) = do
     ne@(_,(CType te _ b)) <- type_expr e
     if not b then lerror pe "is not rvalue" else return ()
-    if te /= TCharacter then lerror pe $ "expecting character, got " ++ show te
-    else return (TECharval ne, CType TInteger False True)
+    if te /= TInteger then lerror pe $ "expecting character, got " ++ show te
+    else return (TECharval ne, CType TCharacter False True)
 type_expr (ECall (Ident f,pf) params, pc) = do
     nf <- getFun f
     case nf of
