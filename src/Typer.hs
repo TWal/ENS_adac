@@ -338,10 +338,7 @@ type_type (Access (Ident nm,p))   = case nm of
 type_decls :: [Ann Decl AlexPosn] -> AlexPosn -> Env TDecls
 type_decls dcls p = do
     r <- CM.foldM (flip td) empty_tdecls dcls
-    let nm = M.filter (not . is_defined) $ dtypes r
-    if not $ M.null nm then lerror p $ "type " ++ show (head $ M.elems nm)
-                                    ++ " declared but not defined"
-    else return ()
+    check_declared p
     return r
  where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
        td (DType (Ident s, p1),p2) tds = do
@@ -379,6 +376,7 @@ type_decls dcls p = do
                $ (CType t True True,Nothing)) tds
                $ non_empty_to_list ids
        td (DProcedure (Ident nm, p) mprs dcls instrs mnm,ppr) tds = do
+           check_declared ppr
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
                       Nothing           -> (nm,ppr)
@@ -397,6 +395,7 @@ type_decls dcls p = do
            addf_if tds ppr nm
                    (TProcedure $ TParams $ map drop3 params, list_to_non_empty li)
        td (DFunction (Ident nm, pnm) (Just prs) (rtp, ptp) dcls instrs mnm, pf) tds = do
+           check_declared pf
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
                       Nothing           -> (nm,pf)
@@ -414,6 +413,7 @@ type_decls dcls p = do
            addf_if tds pf nm
                    (TFunction (TParams $ map drop3 params) t, li)
        td (DFunction (Ident nm, pnm) Nothing (rtp, ptp) dcls instrs mnm, pf) tds = do
+           check_declared pf
            let nm2 = case mnm of
                       Just (Ident x,px) -> (x,px)
                       Nothing           -> (nm,pf)
@@ -431,6 +431,13 @@ type_decls dcls p = do
            addv_if tds pf nm
                (CType t False True, Just $ Right li)
 
+       check_declared :: AlexPosn -> Env ()
+       check_declared p = do
+           e <- S.get
+           let nm = M.filter (not . is_defined) $ types $ snd $ phead e
+           if not $ M.null nm then lerror p $ "type " ++ show (head $ M.elems nm)
+                                           ++ " declared but not defined"
+           else return ()
        empty_tdecls = TDecls M.empty M.empty M.empty
        drop3 :: (a,b,c) -> (a,b)
        drop3 (x,y,z) = (x,y)
