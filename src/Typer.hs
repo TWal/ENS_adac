@@ -346,6 +346,17 @@ type_decls dcls p = do
            else if is_defined $ fromJust mt then return ()
            else lerror p2 $ "type " ++ s ++ " is already declared"
            addt_if tds p1 s RNotDefined
+       td (DAlias (Ident n, pn) (Ident t,pt),pa) tds = do
+           mn <- getTpe n
+           if isNothing mn then return ()
+           else if is_defined $ fromJust mn then return ()
+           else lerror pn $ "type " ++ n ++ " is already declared"
+           mt <- getTpe t
+           if isNothing mt then lerror pt $ "type " ++ t ++ " is not defined"
+           else if not $ is_defined $ fromJust mt
+               then lerror pt $ "type " ++ t ++ " declared but nor defined"
+           else return ()
+           addt_if tds pn n (RAlias t)
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = do
            mt <- getTpe s2
            t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
