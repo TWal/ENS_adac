@@ -28,6 +28,7 @@ data Fichier b = Fichier (Ann Ident b) [Ann Decl b] (NonEmptyList (Ann Instr b))
 
 data Decl b =
     DType (Ann Ident b)
+  | DAlias (Ann Ident b) (Ann Ident b)
   | DAccess (Ann Ident b) (Ann Ident b)
   | DRecord (Ann Ident b) (NonEmptyList (Ann Champs b))
   | DAssign (NonEmptyList (Ann Ident b)) (Ann Type b) (Maybe (Ann Expr b))
