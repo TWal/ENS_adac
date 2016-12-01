@@ -46,7 +46,6 @@ is_access _           = False
 data Functionnal = TFunction TParams Typed | TProcedure TParams
 data TParams = TParams [(String,CType)]
 data Recorded = Record (Map String Typed)
-              | RAccess String
               | RNotDefined
               | RAlias String
               | RNType Typed
@@ -84,10 +83,9 @@ instance Show Typed where
     show TypeNull    = "Null"
 instance Show Recorded where
     show (Record mp) = "Record " ++ (show $ M.toList mp)
-    show (RAccess t) = "RAccess " ++ t
     show RNotDefined = "RNotDefined"
     show (RAlias nm) = "Alias " ++ nm
-    show (RNType t)  = "Native type " ++ show t
+    show (RNType t)  = "Type " ++ show t
 instance Show Functionnal where
     show (TFunction tp t) = "(" ++ show tp ++ " -> " ++ show t ++ ")"
     show (TProcedure tp)  = "(" ++ show tp ++ ")"
@@ -331,7 +329,6 @@ type_lookup nm p = do
     t <- type_get nm p
     case t of
         Record _  -> return $ TRecord nm
-        RAccess x -> return $ TAccess x
         RNotDefined -> lerror p $ nm ++ " is defined but not declared"
         RAlias n    -> type_lookup n p
         RNType t    -> return t
@@ -352,7 +349,7 @@ type_decls dcls p = do
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = do
            mt <- getTpe s2
            t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
-           addt_if tds p1 s1 (RAccess s2)
+           addt_if tds p1 s1 (RNType $ TAccess s2)
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
            addTpe nm pn RNotDefined
            r <- type_champs lcs
@@ -622,10 +619,10 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
          Just (Record mp) -> if not $ M.member f mp
             then lerror pf $ "record " ++ s ++ " has no member " ++ f
             else return $ mp ! f
-         Just (RAlias nm)  -> get_sub nm ps f pf
-         Just (RNType t)   -> return t
-         Just (RAccess mp) -> lerror pf $ "access " ++ s ++ " has no subtypes"
-         Just RNotDefined  -> lerror pe $ s ++ " is declared but not defined"
+         Just (RAlias nm)           -> get_sub nm ps f pf
+         Just (RNType (TRecord nm)) -> get_sub nm ps f pf
+         Just (RNType nt)           -> lerror ps $ show nt ++ " has not subtype " ++ f
+         Just RNotDefined           -> lerror pe $ s ++ " is declared but not defined"
 
 
 
