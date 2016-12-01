@@ -45,7 +45,10 @@ is_access (TAccess _) = True
 is_access _           = False
 data Functionnal = TFunction TParams Typed | TProcedure TParams
 data TParams = TParams [(String,CType)]
-data Recorded = Record (Map String Typed) | RAccess String | RNotDefined
+data Recorded = Record (Map String Typed)
+              | RNotDefined
+              | RAlias String
+              | RNType Typed
 is_defined :: Recorded -> Bool
 is_defined RNotDefined = False
 is_defined _           = True
@@ -80,8 +83,9 @@ instance Show Typed where
     show TypeNull    = "Null"
 instance Show Recorded where
     show (Record mp) = "Record " ++ (show $ M.toList mp)
-    show (RAccess t) = "RAccess " ++ t
     show RNotDefined = "RNotDefined"
+    show (RAlias nm) = "Alias " ++ nm
+    show (RNType t)  = "Type " ++ show t
 instance Show Functionnal where
     show (TFunction tp t) = "(" ++ show tp ++ " -> " ++ show t ++ ")"
     show (TProcedure tp)  = "(" ++ show tp ++ ")"
@@ -308,31 +312,26 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
 
 
 type_type :: Type AlexPosn -> Env Typed
-type_type (NoAccess (Ident nm,p)) = case nm of
- "integer"   -> return TInteger
- "character" -> return TCharacter
- "boolean"   -> return TBoolean
- _           -> do
-     b <- is_declared nm
-     if b then lerror p $ nm ++ " is not a type name" else return ()
-     mt <- getTpe nm
-     t  <- merror p ("type " ++ nm ++ " not declared") mt
-     if not (is_defined t) then lerror p $ "type " ++ nm ++ " not defined "
-     else case t of
-           Record _    -> return $ TRecord nm
-           RAccess x   -> return $ TAccess x
-           RNotDefined -> lerror p $ nm ++ " is defined but not declared"
-type_type (Access (Ident nm,p))   = case nm of
- "integer"   -> lerror p "access only allowed on records, not integer"
- "character" -> lerror p "access only allowed on records, not character"
- "boolean"   -> lerror p "access only allowed on records, not boolean"
- _           -> do
-     b <- is_declared nm
-     if b then lerror p $ nm ++ " is not a type name" else return ()
-     mt <- getTpe nm
-     t  <- merror p ("type " ++ nm ++ " not declared") mt
-     return $ TAccess nm
+type_type (NoAccess (Ident nm,p)) = type_lookup nm p
+type_type (Access (Ident nm,p))   = type_get nm p >> (return $ TAccess nm)
 
+-- Check if type is declared and return it
+type_get :: String -> AlexPosn -> Env Recorded
+type_get nm p = do
+    b <- is_declared nm
+    if b then lerror p $ nm ++ " is not a type name" else return ()
+    mt <- getTpe nm
+    merror p ("type " ++ nm ++ " not declared") mt
+
+-- lookup type recursively over aliases
+type_lookup :: String -> AlexPosn -> Env Typed
+type_lookup nm p = do
+    t <- type_get nm p
+    case t of
+        Record _  -> return $ TRecord nm
+        RNotDefined -> lerror p $ nm ++ " is defined but not declared"
+        RAlias n    -> type_lookup n p
+        RNType t    -> return t
 
 
 type_decls :: [Ann Decl AlexPosn] -> AlexPosn -> Env TDecls
@@ -347,14 +346,10 @@ type_decls dcls p = do
            else if is_defined $ fromJust mt then return ()
            else lerror p2 $ "type " ++ s ++ " is already declared"
            addt_if tds p1 s RNotDefined
-       td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = case s2 of
-           "integer"   -> lerror p3 "access only allowed on records, not integer"
-           "character" -> lerror p3 "access only allowed on records, not character"
-           "boolean"   -> lerror p3 "access only allowed on records, not boolean"
-           _           -> do
-               mt <- getTpe s2
-               t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
-               addt_if tds p1 s1 (RAccess s2)
+       td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = do
+           mt <- getTpe s2
+           t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
+           addt_if tds p1 s1 (RNType $ TAccess s2)
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
            addTpe nm pn RNotDefined
            r <- type_champs lcs
@@ -624,8 +619,10 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
          Just (Record mp) -> if not $ M.member f mp
             then lerror pf $ "record " ++ s ++ " has no member " ++ f
             else return $ mp ! f
-         Just (RAccess mp) -> lerror pf $ "access " ++ s ++ " has no subtypes"
-         Just RNotDefined  -> lerror pe $ s ++ " is declared but not defined"
+         Just (RAlias nm)           -> get_sub nm ps f pf
+         Just (RNType (TRecord nm)) -> get_sub nm ps f pf
+         Just (RNType nt)           -> lerror ps $ show nt ++ " has not subtype " ++ f
+         Just RNotDefined           -> lerror pe $ s ++ " is declared but not defined"
 
 
 
@@ -836,10 +833,15 @@ type_ityped t (Last (_,p)) =
 
 type_program :: Fichier AlexPosn -> Either String TFichier
 type_program f = S.evalStateT (type_file f) (Bottom ("#", e))
- where e = Context vars funs M.empty St.empty
+ where e = Context vars funs tps St.empty
        funs = M.fromList
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
               , ("new_line", TProcedure $ TParams [])
+              ]
+       tps  = M.fromList
+              [ ("integer",   RNType TInteger)
+              , ("character", RNType TCharacter)
+              , ("boolean",   RNType TBoolean)
               ]
        vars = M.empty
 
