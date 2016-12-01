@@ -22,6 +22,7 @@ import           Data.Maybe
 import           Data.List
 import qualified Control.Monad as CM
 import qualified Control.Monad.Trans.State.Strict as S
+import qualified Debug.Trace as T
 
 data Pile a = a :^: Pile a | Bottom a
 
@@ -507,7 +508,8 @@ type_champs nl = CM.foldM add_if M.empty l
  where flatten (Champs nl tp) = map (\x -> (x,tp)) $ non_empty_to_list nl
        l = concat $ map (flatten . fst) $ non_empty_to_list nl
        add_if mp ((Ident k, pk), (t, _)) =
-           if M.member k mp then lerror pk (k ++ " member declared twice")
+           if k == "all" then lerror pk "all is a reserved record member name"
+           else if M.member k mp then lerror pk (k ++ " member declared twice")
            else type_type t >>= (\e -> return $ M.insert k e mp)
 
 
@@ -645,8 +647,10 @@ type_access (AccesIdent (Ident s,p)) = do
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
-     CType (TAccess s) _  b2 -> get_sub s pe f pf >>= \x -> return $ CType x True b2
-     CType (TRecord s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
+     CType (TAccess (l,n)) _  b2 -> if f == "all"
+                                     then type_lookup (Just l) n pe >>= \x -> return $ CType x True b2
+                                     else get_sub (l,n) pe f pf     >>= \x -> return $ CType x True b2
+     CType (TRecord s)     b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
      _                       -> lerror pe $ "expression does not evaluate to a record"
     return (AccessPart te f, rtp)
  where get_sub :: TId -> AlexPosn -> String -> AlexPosn -> Env Typed
@@ -657,10 +661,10 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
          Just (Record mp) -> if not $ M.member f mp
             then lerror pf $ "record " ++ s ++ " has no member " ++ f
             else return $ mp ! f
-         Just (RAlias nm)           -> get_sub nm ps f pf
-         Just (RNType (TRecord nm)) -> get_sub nm ps f pf
-         Just (RNType nt)           -> lerror ps $ show nt ++ " has not member " ++ f
-         Just RNotDefined           -> lerror pe $ s ++ " is declared but not defined"
+         Just (RAlias nm)               -> get_sub nm ps f pf
+         Just (RNType (TRecord nm))     -> get_sub nm ps f pf
+         Just (RNType nt)               -> lerror ps $ show nt ++ " has no member " ++ f
+         Just RNotDefined               -> lerror pe $ s ++ " is declared but not defined"
 
 
 
