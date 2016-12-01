@@ -26,11 +26,12 @@ import qualified Control.Monad.Trans.State.Strict as S
 data Pile a = a :^: Pile a | Bottom a
 
 -------------- General types definitions --------------------------------------
+type TId = (Integer,String) -- (level,type name)
 data Typed = TInteger
            | TCharacter
            | TBoolean
-           | TRecord String
-           | TAccess String
+           | TRecord TId
+           | TAccess TId
            | TypeNull
 instance Eq Typed where
     TInteger   == TInteger   = True
@@ -47,7 +48,7 @@ data Functionnal = TFunction TParams Typed | TProcedure TParams
 data TParams = TParams [(String,CType)]
 data Recorded = Record (Map String Typed)
               | RNotDefined
-              | RAlias String
+              | RAlias TId
               | RNType Typed
 is_defined :: Recorded -> Bool
 is_defined RNotDefined = False
@@ -62,7 +63,7 @@ data Context = Context
     , types     :: Map String Recorded
     , declared  :: Set String
     }
-type Env = S.StateT (Pile (String,Context)) (Either String)
+type Env = S.StateT (Pile (Integer,Context)) (Either String)
 
 -------------- Outputing ------------------------------------------------------
 instance Show TParams where
@@ -78,13 +79,13 @@ instance Show Typed where
     show TInteger    = "Integer"
     show TCharacter  = "Character"
     show TBoolean    = "Bool"
-    show (TRecord n) = "Record " ++ n
-    show (TAccess n) = "Access " ++ n
+    show (TRecord n) = "Record " ++ show n
+    show (TAccess n) = "Access " ++ show n
     show TypeNull    = "Null"
 instance Show Recorded where
     show (Record mp) = "Record " ++ (show $ M.toList mp)
     show RNotDefined = "RNotDefined"
-    show (RAlias nm) = "Alias " ++ nm
+    show (RAlias nm) = "Alias " ++ show nm
     show (RNType t)  = "Type " ++ show t
 instance Show Functionnal where
     show (TFunction tp t) = "(" ++ show tp ++ " -> " ++ show t ++ ")"
@@ -110,15 +111,26 @@ update_head (Bottom x) f = Bottom $ f x
 extract :: (a -> b) -> (s,a) -> (s,b)
 extract f (x, y) = (x, f y)
 
-findFromContextL :: String -> (String,Map String a) -> Maybe a
+_contextOf :: String -> Pile (Integer,Map String a) -> Maybe Integer
+_contextOf s ((n,mp) :^: xs) = if M.member s mp then Just n
+                                                else _contextOf s xs
+_contextOf s (Bottom (n,mp)) = if M.member s mp then Just n
+                                                else Nothing
+contextOf :: String -> Env (Maybe Integer)
+contextOf s = do
+    e <- S.get
+    return $ _contextOf s $ fmap (extract types) e
+
+
+findFromContextL :: String -> (Integer,Map String a) -> Maybe a
 findFromContextL s (_,mp) = if M.member s mp then Just $ mp ! s else Nothing
-findFromContext :: String -> Pile (String,Map String a) -> Maybe a
+findFromContext :: String -> Pile (Integer,Map String a) -> Maybe a
 findFromContext s ((_,mp) :^: xs) = if M.member s mp then Just $ mp ! s
                                                      else findFromContext s xs
 findFromContext s (Bottom (_,mp)) = if M.member s mp then Just $ mp ! s
                                                      else Nothing
 
-findWithContext :: String -> String -> Pile (String,Map String a) -> Maybe a
+findWithContext :: Integer -> String -> Pile (Integer,Map String a) -> Maybe a
 findWithContext c s ((n,mp) :^: xs) =
     if n == c then if M.member s mp then Just $ mp ! s
                    else Nothing
@@ -131,7 +143,7 @@ findWithContext c s (Bottom (n,mp)) =
 mget :: (Context -> Map String a) -> String -> Env (Maybe a)
 mget ext s = S.get
     >>= \e -> return $ findFromContext s $ fmap (extract ext) e
-mgetC :: (Context -> Map String a) -> String -> String -> Env (Maybe a)
+mgetC :: (Context -> Map String a) -> Integer -> String -> Env (Maybe a)
 mgetC ext c s = S.get
     >>= \e -> return $ findWithContext c s $ fmap (extract ext) e
 mgetL :: (Context -> Map String a) -> String -> Env (Maybe a)
@@ -229,12 +241,13 @@ addTpe s p t = do
 empty_context :: Context
 empty_context = Context M.empty M.empty M.empty St.empty
 
-push_env :: String -> Env ()
-push_env s = do
+push_env :: Env ()
+push_env = do
     e <- S.get
-    S.put $ (s, empty_context) :^: e
+    let (n,_) = phead e
+    S.put $ (n+1, empty_context) :^: e
 
-pop_env :: Env (String,Context)
+pop_env :: Env (Integer,Context)
 pop_env = do
     e <- S.get
     S.put $ ptail e
@@ -302,7 +315,7 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
                       ++ name ++ " is renamed " ++ (fromI $ fst $ fromJust mnm2)
              else return ()
     addFun name pos $ TProcedure $ TParams []
-    push_env name
+    push_env
     tdcls  <- type_decls decls pos
     tistrs <- CM.mapM type_instr $ non_empty_to_list instrs
     pop_env
@@ -312,26 +325,37 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
 
 
 type_type :: Type AlexPosn -> Env Typed
-type_type (NoAccess (Ident nm,p)) = type_lookup nm p
-type_type (Access (Ident nm,p))   = type_get nm p >> (return $ TAccess nm)
+type_type (NoAccess (Ident nm,p)) = type_lookup Nothing nm p
+type_type (Access (Ident nm,p))   = do
+    type_get Nothing nm p
+    (Just l) <- contextOf nm -- type_get makes sure nm is defined
+    return $ TAccess (l,nm)
 
 -- Check if type is declared and return it
-type_get :: String -> AlexPosn -> Env Recorded
-type_get nm p = do
+-- Context can be specified
+type_get :: Maybe Integer -> String -> AlexPosn -> Env Recorded
+type_get mc nm p = do
     b <- is_declared nm
     if b then lerror p $ nm ++ " is not a type name" else return ()
-    mt <- getTpe nm
+    mt <- case mc of
+           Just c  -> getTpeC c nm
+           Nothing -> getTpe nm
     merror p ("type " ++ nm ++ " not declared") mt
 
 -- lookup type recursively over aliases
-type_lookup :: String -> AlexPosn -> Env Typed
-type_lookup nm p = do
-    t <- type_get nm p
+-- Context can be specified
+type_lookup :: Maybe Integer -> String -> AlexPosn -> Env Typed
+type_lookup mc nm p = do
+    t <- type_get mc nm p
+    (Just l) <- contextOf nm -- we're sure t is defined from previous command
+                             -- so it can't be Nothing
     case t of
-        Record _  -> return $ TRecord nm
-        RNotDefined -> lerror p $ nm ++ " is defined but not declared"
-        RAlias n    -> type_lookup n p
-        RNType t    -> return t
+        Record _     -> case mc of
+                            Nothing -> return $ TRecord (l,nm)
+                            Just c  -> return $ TRecord (c,nm)
+        RNotDefined  -> lerror p $ nm ++ " is defined but not declared"
+        RAlias (c,n) -> type_lookup (Just c) n p
+        RNType t     -> return t
 
 
 type_decls :: [Ann Decl AlexPosn] -> AlexPosn -> Env TDecls
@@ -356,11 +380,13 @@ type_decls dcls p = do
            else if not $ is_defined $ fromJust mt
                then lerror pt $ "type " ++ t ++ " declared but nor defined"
            else return ()
-           addt_if tds pn n (RAlias t)
+           (Just l) <- contextOf t
+           addt_if tds pn n (RAlias (l,t))
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = do
            mt <- getTpe s2
            t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
-           addt_if tds p1 s1 (RNType $ TAccess s2)
+           (Just l) <- contextOf s2
+           addt_if tds p1 s1 (RNType $ TAccess (l,s2))
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
            addTpe nm pn RNotDefined
            r <- type_champs lcs
@@ -392,7 +418,7 @@ type_decls dcls p = do
                       Nothing  -> return []
                       Just prs -> type_params prs
            addFun nm ppr $ TProcedure $ TParams $ map drop3 params -- Adding the procedure
-           push_env nm
+           push_env
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
                                                      -- the environment
            type_decls dcls ppr
@@ -411,7 +437,7 @@ type_decls dcls p = do
            declare nm
            t <- type_type rtp
            addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
-           push_env nm
+           push_env
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
            type_decls dcls pf
            li <- type_instr_typed t instrs
@@ -427,9 +453,9 @@ type_decls dcls p = do
                               else return ()
            declare nm
            t <- type_type rtp
-           push_env ""
+           push_env
            addVar nm pf $ CType t False True-- Adding the function
-           push_env nm
+           push_env
            type_decls dcls pf
            li <- type_instr_typed t instrs
            pop_env
@@ -578,7 +604,8 @@ type_expr (ENew (Ident r,pr), pe) = do
         Nothing         -> lerror pr $ "type " ++ r ++ " is not defined"
         Just (Record _) -> return ()
         Just t2         -> lerror pr $ "expected defined record"
-    return (TENew r, CType (TAccess r) False True)
+    (Just l) <- contextOf r
+    return (TENew r, CType (TAccess (l,r)) False True)
 type_expr (ECharval e@(_,pe), pc) = do
     ne@(_,(CType te _ b)) <- type_expr e
     if not b then lerror pe "is not rvalue" else return ()
@@ -620,11 +647,11 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     rtp <- case tpe of
      CType (TAccess s) _  b2 -> get_sub s pe f pf >>= \x -> return $ CType x True b2
      CType (TRecord s) b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
-     _                   -> lerror pe $ "expression does not evaluate to a record"
+     _                       -> lerror pe $ "expression does not evaluate to a record"
     return (AccessPart te f, rtp)
- where get_sub :: String -> AlexPosn -> String -> AlexPosn -> Env Typed
-       get_sub s ps f pf = do
-        t <- getTpe s
+ where get_sub :: TId -> AlexPosn -> String -> AlexPosn -> Env Typed
+       get_sub (c,s) ps f pf = do
+        t <- getTpeC c s
         case t of
          Nothing -> lerror pe $ "expression has unvalid " ++ s ++ " type"
          Just (Record mp) -> if not $ M.member f mp
@@ -632,7 +659,7 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
             else return $ mp ! f
          Just (RAlias nm)           -> get_sub nm ps f pf
          Just (RNType (TRecord nm)) -> get_sub nm ps f pf
-         Just (RNType nt)           -> lerror ps $ show nt ++ " has not subtype " ++ f
+         Just (RNType nt)           -> lerror ps $ show nt ++ " has not member " ++ f
          Just RNotDefined           -> lerror pe $ s ++ " is declared but not defined"
 
 
@@ -713,7 +740,7 @@ type_instr_g t (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
     if te1 /= TInteger then lerror pe1 $ "expecting a integer, got a " ++ show te1
     else if te2 /= TInteger then lerror pe2 $ "expecting a integer, got a" ++ show te2
     else return ()
-    push_env "for#"
+    push_env
     addVar v pv $ CType TInteger False True
     li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     pop_env
@@ -843,7 +870,7 @@ type_ityped t (Last (_,p)) =
 
 
 type_program :: Fichier AlexPosn -> Either String TFichier
-type_program f = S.evalStateT (type_file f) (Bottom ("#", e))
+type_program f = S.evalStateT (type_file f) (Bottom (0, e))
  where e = Context vars funs tps St.empty
        funs = M.fromList
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
