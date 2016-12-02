@@ -150,7 +150,7 @@ acces : ident           { (AccesIdent $1, snd $1) }
 
 decl :: { Ann Decl AlexPosn }
 decl : typet ident ';'                                  { (DType $2, $1) }
-     | typet ident is ident ';'                         { (DAlias $2 $4, $1) }
+     | typet ident is new ident ';'                     { (DAlias $2 $5, $1) }
      | typet ident is access ident ';'                  { (DAccess $2 $5, $1) }
      | typet ident is record champslist end record ';'  { (DRecord $2 $5, $1) }
      | identlist ':' type ';'                           { (DAssign $1 $3 Nothing, fstElemAnn $1) }
