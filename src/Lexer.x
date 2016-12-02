@@ -5,7 +5,7 @@ module Lexer (
     alexError',
     scanner,
     Alex,
-    AlexPosn,
+    AlexPosn(..),
     Token(..)
 ) where
 

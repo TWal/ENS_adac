@@ -290,7 +290,9 @@ showPos :: AlexPosn -> String
 showPos = show
 
 lerror :: AlexPosn -> String -> Env a
-lerror p s = fail $ (showPos p) ++ " : " ++ s
+lerror (AlexPn _ l c) s =
+      fail $ "File \"" ++ "TODO" ++ "\", line " ++ show l ++ ", characters " ++
+             show c ++ "-" ++ show (c+1) ++ ":\n" ++ s
 
 merror :: AlexPosn -> String -> Maybe a -> Env a
 merror p s Nothing  = lerror p s
