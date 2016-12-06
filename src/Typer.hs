@@ -870,8 +870,21 @@ type_ityped t (Last (IIf e l lxs (Just l2), pif)) = do
            else lerror pe $ "expecting a boolean, got a " ++ show te
            (li,p) <- type_ityped t l
            return ((ne, li), p)
-type_ityped t (Last (_,p)) =
-    lerror p "control reach end of function"
+type_ityped t (Last i@(IFor _ _ _ _ _,pf)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pf)
+type_ityped t (Last i@(IWhile _ _,pw)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pw)
+type_ityped t (Last i@(IAssign _ _,pa)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pa)
+type_ityped t (Last i@(IIdent _,pi)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pi)
+type_ityped t (Last i@(ICall _ _,pc)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pc)
 
 
 
