@@ -5,6 +5,7 @@ module Lexer (
     alexError',
     scanner,
     Alex,
+    Position(..),
     AlexPosn(..),
     Token(..)
 ) where
@@ -80,25 +81,26 @@ tokens :-
 
 {
 
-tok' :: (AlexPosn -> String -> Token) -> AlexAction Token
-tok' f (p,_,_,s) i = return $ (f p (take i s))
+tok' :: (Position -> String -> Token) -> AlexAction Token
+tok' f (p,_,_,s) i = getFilePath >>= (\fp -> return $ (f (Position p fp) (take i s)))
 
-tok :: (AlexPosn -> Token) -> AlexAction Token
+tok :: (Position -> Token) -> AlexAction Token
 tok x = tok' $ \p _ -> x p
 
-tok_read :: ((AlexPosn, Integer) -> Token) -> AlexAction Token
+tok_read :: ((Position, Integer) -> Token) -> AlexAction Token
 tok_read x = tok' $ \p s -> x (p, (read s))
 
-tok_string :: ((AlexPosn, String) -> Token) -> AlexAction Token
+tok_string :: ((Position, String) -> Token) -> AlexAction Token
 tok_string x = tok' $ \p s -> x (p, s)
 
-tok_char :: ((AlexPosn, Char) -> Token) -> AlexAction Token
+tok_char :: ((Position, Char) -> Token) -> AlexAction Token
 tok_char x = tok' $ \p s -> x (p, (head . tail $ s))
 
 alexEOF :: Alex Token
 alexEOF = do
   (p, _, _, _) <- alexGetInput
-  return $ TokenEOF p
+  fp <- getFilePath
+  return $ TokenEOF (Position p fp)
 
 scanner :: String -> FilePath -> Either String [Token]
 scanner str fp =
@@ -151,59 +153,61 @@ alexError' msg =
       alexError ("File \"" ++ fp ++ "\", line " ++ show l ++ ", characters " ++ show c ++ "-" ++ show (c+1)
           ++ ":\n" ++ msg)
 
+data Position = Position AlexPosn FilePath deriving (Eq, Show)
+
 data Token =
-      TokenInt (AlexPosn, Integer)
-    | TokenIdent (AlexPosn, String)
-    | TokenChar (AlexPosn, Char)
-    | TokenAccess AlexPosn
-    | TokenFalse AlexPosn
-    | TokenLoop AlexPosn
-    | TokenProcedure AlexPosn
-    | TokenTrue AlexPosn
-    | TokenAnd AlexPosn
-    | TokenFor AlexPosn
-    | TokenNew AlexPosn
-    | TokenRecord AlexPosn
-    | TokenType AlexPosn
-    | TokenBegin AlexPosn
-    | TokenFunction AlexPosn
-    | TokenNot AlexPosn
-    | TokenUse AlexPosn
-    | TokenElse AlexPosn
-    | TokenIf AlexPosn
-    | TokenNull AlexPosn
-    | TokenReturn AlexPosn
-    | TokenWhile AlexPosn
-    | TokenElsif AlexPosn
-    | TokenIn AlexPosn
-    | TokenOr AlexPosn
-    | TokenReverse AlexPosn
-    | TokenWith AlexPosn
-    | TokenEnd AlexPosn
-    | TokenIs AlexPosn
-    | TokenOut AlexPosn
-    | TokenThen AlexPosn
-    | TokenEqual AlexPosn
-    | TokenNotEqual AlexPosn
-    | TokenLower AlexPosn
-    | TokenLowerEqual AlexPosn
-    | TokenGreater AlexPosn
-    | TokenGreaterEqual AlexPosn
-    | TokenAdd AlexPosn
-    | TokenSubtract AlexPosn
-    | TokenMultiply AlexPosn
-    | TokenDivide AlexPosn
-    | TokenLParent AlexPosn
-    | TokenRParent AlexPosn
-    | TokenRem AlexPosn
-    | TokenAssign AlexPosn
-    | TokenSemicolon AlexPosn
-    | TokenDot AlexPosn
-    | TokenColon AlexPosn
-    | TokenComma AlexPosn
-    | TokenDoubledot AlexPosn
-    | TokenCharval AlexPosn
-    | TokenEOF AlexPosn
+      TokenInt (Position, Integer)
+    | TokenIdent (Position, String)
+    | TokenChar (Position, Char)
+    | TokenAccess Position
+    | TokenFalse Position
+    | TokenLoop Position
+    | TokenProcedure Position
+    | TokenTrue Position
+    | TokenAnd Position
+    | TokenFor Position
+    | TokenNew Position
+    | TokenRecord Position
+    | TokenType Position
+    | TokenBegin Position
+    | TokenFunction Position
+    | TokenNot Position
+    | TokenUse Position
+    | TokenElse Position
+    | TokenIf Position
+    | TokenNull Position
+    | TokenReturn Position
+    | TokenWhile Position
+    | TokenElsif Position
+    | TokenIn Position
+    | TokenOr Position
+    | TokenReverse Position
+    | TokenWith Position
+    | TokenEnd Position
+    | TokenIs Position
+    | TokenOut Position
+    | TokenThen Position
+    | TokenEqual Position
+    | TokenNotEqual Position
+    | TokenLower Position
+    | TokenLowerEqual Position
+    | TokenGreater Position
+    | TokenGreaterEqual Position
+    | TokenAdd Position
+    | TokenSubtract Position
+    | TokenMultiply Position
+    | TokenDivide Position
+    | TokenLParent Position
+    | TokenRParent Position
+    | TokenRem Position
+    | TokenAssign Position
+    | TokenSemicolon Position
+    | TokenDot Position
+    | TokenColon Position
+    | TokenComma Position
+    | TokenDoubledot Position
+    | TokenCharval Position
+    | TokenEOF Position
     deriving (Eq, Show)
 
 }

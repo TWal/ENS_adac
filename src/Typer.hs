@@ -206,7 +206,7 @@ declare n = do
     S.put $ update_head e
           $ extract $ \c -> c { declared = St.insert n (declared c) }
 
-addVar :: String -> AlexPosn -> CType -> Env ()
+addVar :: String -> Position -> CType -> Env ()
 addVar s p t = do
     b <- hasNameL s
     if b then lerror p $ s ++ " is already used, can't create variable" else return ()
@@ -214,7 +214,7 @@ addVar s p t = do
     S.put $ update_head e
           $ extract $ \c -> c { variables = M.insert s t (variables c) }
 
-addFun :: String -> AlexPosn -> Functionnal -> Env ()
+addFun :: String -> Position -> Functionnal -> Env ()
 addFun s p t = do
     b1 <- hasNameL s
     if b1 then lerror p $ s ++ " is already used, can't create functionnal" else return ()
@@ -222,7 +222,7 @@ addFun s p t = do
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
-addTpe :: String -> AlexPosn -> Recorded -> Env ()
+addTpe :: String -> Position -> Recorded -> Env ()
 addTpe s p t = do
     b1 <- hasVarL s
     b2 <- hasFunL s
@@ -286,15 +286,15 @@ data TInstr =
   | TIWhile TPExpr (NonEmptyList TInstr)
 
 -------------- Getting the typing done ----------------------------------------
-showPos :: AlexPosn -> String
+showPos :: Position -> String
 showPos = show
 
-lerror :: AlexPosn -> String -> Env a
-lerror (AlexPn _ l c) s =
-      fail $ "File \"" ++ "TODO" ++ "\", line " ++ show l ++ ", characters " ++
+lerror :: Position -> String -> Env a
+lerror (Position (AlexPn _ l c) fp) s =
+      fail $ "File \"" ++ fp ++ "\", line " ++ show l ++ ", characters " ++
              show c ++ "-" ++ show (c+1) ++ ":\n" ++ s
 
-merror :: AlexPosn -> String -> Maybe a -> Env a
+merror :: Position -> String -> Maybe a -> Env a
 merror p s Nothing  = lerror p s
 merror p s (Just x) = return x
 
@@ -312,7 +312,7 @@ list_to_non_empty [x]          = Last x
 
 
 
-type_file :: Fichier AlexPosn -> Env TFichier
+type_file :: Fichier Position -> Env TFichier
 type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
     if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
                       ++ name ++ " is renamed " ++ (fromI $ fst $ fromJust mnm2)
@@ -327,7 +327,7 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
 
 
 
-type_type :: Type AlexPosn -> Env Typed
+type_type :: Type Position -> Env Typed
 type_type (NoAccess (Ident nm,p)) = type_lookup Nothing nm p
 type_type (Access (Ident nm,p))   = do
     type_get Nothing nm p
@@ -336,7 +336,7 @@ type_type (Access (Ident nm,p))   = do
 
 -- Check if type is declared and return it
 -- Context can be specified
-type_get :: Maybe Integer -> String -> AlexPosn -> Env Recorded
+type_get :: Maybe Integer -> String -> Position -> Env Recorded
 type_get mc nm p = do
     b1 <- is_declared nm
     b2 <- hasVar nm
@@ -349,7 +349,7 @@ type_get mc nm p = do
 
 -- lookup type recursively over aliases
 -- Context can be specified
-type_lookup :: Maybe Integer -> String -> AlexPosn -> Env Typed
+type_lookup :: Maybe Integer -> String -> Position -> Env Typed
 type_lookup mc nm p = do
     t <- type_get mc nm p
     (Just l) <- contextOf nm -- we're sure t is defined from previous command
@@ -363,12 +363,12 @@ type_lookup mc nm p = do
         RNType t     -> return t
 
 
-type_decls :: [Ann Decl AlexPosn] -> AlexPosn -> Env TDecls
+type_decls :: [Ann Decl Position] -> Position -> Env TDecls
 type_decls dcls p = do
     r <- CM.foldM (flip td) empty_tdecls dcls
     check_declared p
     return r
- where td :: Ann Decl AlexPosn -> TDecls -> Env TDecls
+ where td :: Ann Decl Position -> TDecls -> Env TDecls
        td (DType (Ident s, p1),p2) tds = do
            mt <- getTpe s
            if isNothing mt then return ()
@@ -468,7 +468,7 @@ type_decls dcls p = do
            addv_if tds pf nm
                (CType t False True, Just $ Right li)
 
-       check_declared :: AlexPosn -> Env ()
+       check_declared :: Position -> Env ()
        check_declared p = do
            e <- S.get
            let nm = M.filter (not . is_defined) $ types $ snd $ phead e
@@ -478,7 +478,7 @@ type_decls dcls p = do
        empty_tdecls = TDecls M.empty M.empty M.empty
        drop3 :: (a,b,c) -> (a,b)
        drop3 (x,y,z) = (x,y)
-       addt_if :: TDecls -> AlexPosn -> String -> Recorded -> Env TDecls
+       addt_if :: TDecls -> Position -> String -> Recorded -> Env TDecls
        addt_if tds p k e = if M.member k (dtypes tds)
                            then if is_defined $ (dtypes tds) ! k
                                 then lerror p $ k ++ " is already defined"
@@ -488,7 +488,7 @@ type_decls dcls p = do
                            else do
                                  addTpe k p e
                                  return $ tds { dtypes = M.insert k e (dtypes tds) }
-       addv_if :: TDecls -> AlexPosn -> String
+       addv_if :: TDecls -> Position -> String
                -> (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
                -> Env TDecls
        addv_if tds p k e = if M.member k (dvars tds)
@@ -496,7 +496,7 @@ type_decls dcls p = do
                            else do
                                  addVar k p (fst e)
                                  return $ tds { dvars = M.insert k e (dvars tds) }
-       addf_if :: TDecls -> AlexPosn -> String
+       addf_if :: TDecls -> Position -> String
                -> (Functionnal,NonEmptyList TInstr) -> Env TDecls
        addf_if tds p k e = if M.member k (dfuns tds)
                            then lerror p $ k ++ " is already declared"
@@ -506,7 +506,7 @@ type_decls dcls p = do
 
 
 
-type_champs :: NonEmptyList (Ann Champs AlexPosn)
+type_champs :: NonEmptyList (Ann Champs Position)
             -> Env (Map String Typed)
 type_champs nl = CM.foldM add_if M.empty l
  where flatten (Champs nl tp) = map (\x -> (x,tp)) $ non_empty_to_list nl
@@ -517,15 +517,15 @@ type_champs nl = CM.foldM add_if M.empty l
            else type_type t >>= (\e -> return $ M.insert k e mp)
 
 
-type_params :: Ann Params AlexPosn -> Env [(String,CType,AlexPosn)]
+type_params :: Ann Params Position -> Env [(String,CType,Position)]
 type_params (Params prs,pos) = do
     nprs <- mapM tpr mprs
     let dbl = has_double $ map fst3 nprs
     case dbl of
      Nothing -> return nprs
      Just x  -> lerror pos $ x ++ " is used twice in argument list"
- where tpr :: (Ann Ident AlexPosn, Maybe (Ann Mode AlexPosn), Ann Type AlexPosn)
-           -> Env (String,CType,AlexPosn)
+ where tpr :: (Ann Ident Position, Maybe (Ann Mode Position), Ann Type Position)
+           -> Env (String,CType,Position)
        tpr ((Ident nm,pnm), md, (tp, ptp)) = do
            declare nm
            t <- type_type tp
@@ -545,7 +545,7 @@ type_params (Params prs,pos) = do
 
 
 
-type_expr :: Ann Expr AlexPosn -> Env TPExpr
+type_expr :: Ann Expr Position -> Env TPExpr
 type_expr (EInt i,_)  = return (TEInt i,  CType TInteger   False True)
 type_expr (EChar c,_) = return (TEChar c, CType TCharacter False True)
 type_expr (EBool b,_) = return (TEBool b, CType TBoolean   False True)
@@ -578,7 +578,7 @@ type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
          else if te1 == te2                         then return ()
          else lerror peb $ "can't compare " ++ show te1 ++ " and " ++ show te2
       return (TEBinop (cvbnp b) ne1 ne2, CType TBoolean False True)
- where cvbnp :: Binop AlexPosn -> Binop ()
+ where cvbnp :: Binop Position -> Binop ()
        cvbnp Equal        = Equal
        cvbnp NotEqual     = NotEqual
        cvbnp Lower        = Lower
@@ -630,7 +630,7 @@ type_expr (ECall (Ident f,pf) params, pc) = do
           tprs <- CM.mapM cmppr $ zip cprs prs
           return (TECall f $ list_to_non_empty tprs, CType tp False True)
 
-cmppr :: (Ann Expr AlexPosn, (String,CType)) -> Env TPExpr
+cmppr :: (Ann Expr Position, (String,CType)) -> Env TPExpr
 cmppr (e@(_,pe),(s,CType t o i)) = do
     ne@(_,(CType te b1 b2)) <- type_expr e
     if i && not b2 then lerror pe "expecting a rvalue for in parameter"
@@ -642,7 +642,7 @@ cmppr (e@(_,pe),(s,CType t o i)) = do
 
 
 
-type_access :: Acces AlexPosn -> Env (TAccess,CType)
+type_access :: Acces Position -> Env (TAccess,CType)
 type_access (AccesIdent (Ident s,p)) = do
     v <- getVar s 
     case v of
@@ -657,7 +657,7 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
      CType (TRecord s)     b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
      _                       -> lerror pe $ "expression does not evaluate to a record"
     return (AccessPart te f, rtp)
- where get_sub :: TId -> AlexPosn -> String -> AlexPosn -> Env Typed
+ where get_sub :: TId -> Position -> String -> Position -> Env Typed
        get_sub (c,s) ps f pf = do
         t <- getTpeC c s
         case t of
@@ -672,10 +672,10 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
 
 
 
-type_instr :: Ann Instr AlexPosn -> Env TInstr
+type_instr :: Ann Instr Position -> Env TInstr
 type_instr = type_instr_g Nothing
 
-type_instr_g :: Maybe Typed -> Ann Instr AlexPosn -> Env TInstr
+type_instr_g :: Maybe Typed -> Ann Instr Position -> Env TInstr
 type_instr_g _ (IAssign (a, pa) e@(_, pe), pia) = do
     ne@(_, CType te _ b) <- type_expr e
     if not b then lerror pe $ "expecting a rvalue" else return ()
@@ -730,7 +730,7 @@ type_instr_g t (IIf e l lxs ml, pif) = do
                     nl2 <- CM.mapM (type_instr_g t) $ non_empty_to_list l2
                     return $ Just $ list_to_non_empty nl2
     return $ TIIf (list_to_non_empty ((ne,nl) : nlxs)) nml
- where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
+ where type_if :: (Ann Expr Position, NonEmptyList (Ann Instr Position))
                -> Env (TPExpr, NonEmptyList TInstr)
        type_if (e@(_,pe), l) = do
            ne@(_,CType te _ b) <- type_expr e
@@ -761,7 +761,7 @@ type_instr_g t (IWhile e@(_, pe) instrs, pw) = do
     li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     return $ TIWhile ne $ list_to_non_empty li
 
-type_instr_typed :: Typed -> NonEmptyList (Ann Instr AlexPosn) -> Env (NonEmptyList TInstr)
+type_instr_typed :: Typed -> NonEmptyList (Ann Instr Position) -> Env (NonEmptyList TInstr)
 type_instr_typed t l = do
     (r,m) <- type_ityped t l
     case m of
@@ -769,8 +769,8 @@ type_instr_typed t l = do
      Just p  -> lerror p "control reach end of function"
 
 -- Will remove unreachable instructions, but still type them
-type_ityped :: Typed -> NonEmptyList (Ann Instr AlexPosn)
-            -> Env (NonEmptyList TInstr, Maybe AlexPosn)
+type_ityped :: Typed -> NonEmptyList (Ann Instr Position)
+            -> Env (NonEmptyList TInstr, Maybe Position)
 type_ityped t (Cons i@(IAssign _ _,_) is) = do
     ni      <- type_instr_g (Just t) i
     (nis,p) <- type_ityped t is
@@ -808,7 +808,7 @@ type_ityped t (Cons (IIf e l lxs (Just l2), pif) is) = do
     ((ne,nl),p1) <- type_if (e,l)
     nlxs         <- CM.mapM type_if lxs
     (nml,p2)     <- type_ityped t l2
-    -- p :: Maybe (Maybe AlexPosn), but we don't as we discard the value if
+    -- p :: Maybe (Maybe Position), but we don't as we discard the value if
     -- it's a Just
     let p = listToMaybe $ filter isJust $ p1 : p2 : map snd nlxs
     case p of
@@ -821,8 +821,8 @@ type_ityped t (Cons (IIf e l lxs (Just l2), pif) is) = do
                              (Just nml))
                   nis
                 , np)
- where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
-               -> Env ((TPExpr, NonEmptyList TInstr), Maybe AlexPosn)
+ where type_if :: (Ann Expr Position, NonEmptyList (Ann Instr Position))
+               -> Env ((TPExpr, NonEmptyList TInstr), Maybe Position)
        type_if (e@(_,pe), l) = do
            ne@(_,CType te _ b) <- type_expr e
            if not b then lerror pe "expecting a rvalue" else return ()
@@ -855,7 +855,7 @@ type_ityped t (Last (IIf e l lxs (Just l2), pif)) = do
     ((ne,nl),p1) <- type_if (e,l)
     nlxs         <- CM.mapM type_if lxs
     (nml,p2)     <- type_ityped t l2
-    -- p :: Maybe (Maybe AlexPosn), but we don't as we discard the value if
+    -- p :: Maybe (Maybe Position), but we don't as we discard the value if
     -- it's a Just
     let p = listToMaybe $ filter isJust $ p1 : p2 : map snd nlxs
     case p of
@@ -863,8 +863,8 @@ type_ityped t (Last (IIf e l lxs (Just l2), pif)) = do
                                     (Just nml))
                        , Nothing)
      Just np -> lerror (fromJust np) "control reach end of function"
- where type_if :: (Ann Expr AlexPosn, NonEmptyList (Ann Instr AlexPosn))
-               -> Env ((TPExpr, NonEmptyList TInstr), Maybe AlexPosn)
+ where type_if :: (Ann Expr Position, NonEmptyList (Ann Instr Position))
+               -> Env ((TPExpr, NonEmptyList TInstr), Maybe Position)
        type_if (e@(_,pe), l) = do
            ne@(_,CType te _ b) <- type_expr e
            if not b then lerror pe "expecting a rvalue" else return ()
@@ -893,7 +893,7 @@ type_ityped t (Last i@(IIf _ _ _ Nothing,pi)) = do
 
 
 
-type_program :: Fichier AlexPosn -> Either String TFichier
+type_program :: Fichier Position -> Either String TFichier
 type_program f = S.evalStateT (type_file f) (Bottom (0, e))
  where e = Context vars funs tps St.empty
        funs = M.fromList
