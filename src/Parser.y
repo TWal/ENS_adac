@@ -131,7 +131,7 @@ instrlist :: { NonEmptyList (Ann Instr Position) }
 instrlist : instr            { Last $1 }
           | instr instrlist  { Cons $1 $2 }
 
-elsiflist :: { [((Ann Expr Position), (NonEmptyList (Ann Instr AlexPosn)))] }
+elsiflist :: { [((Ann Expr Position), (NonEmptyList (Ann Instr Position)))] }
 elsiflist : {- empty -}                          { [] }
           | elsif expr then instrlist elsiflist  { ($2, $4):$5 }
 
