@@ -437,7 +437,6 @@ type_decls dcls p = do
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
            params <- type_params prs
-           declare nm
            t <- type_type rtp
            addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            push_env
@@ -454,7 +453,6 @@ type_decls dcls p = do
                       Nothing           -> (nm,pf)
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
-           declare nm
            t <- type_type rtp
            push_env
            addVar nm pf $ CType t False True-- Adding the function
