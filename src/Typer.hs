@@ -388,6 +388,8 @@ type_decls dcls p = do
        td (DAccess (Ident s1, p1) (Ident s2, p2), p3) tds = do
            mt <- getTpe s2
            t  <- merror p2 ("type " ++ s2 ++ " not declared") mt
+           if s1 /= s2 then return ()
+           else lerror p3 "access type cannot designate itself"
            (Just l) <- contextOf s2
            addt_if tds p1 s1 (RNType $ TAccess (l,s2))
        td (DRecord (Ident nm, pn) lcs, pr) tds = do
