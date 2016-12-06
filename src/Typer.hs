@@ -887,6 +887,9 @@ type_ityped t (Last i@(IIdent _,pi)) = do
 type_ityped t (Last i@(ICall _ _,pc)) = do
     ni      <- type_instr_g (Just t) i
     return (Last ni, Just pc)
+type_ityped t (Last i@(IIf _ _ _ Nothing,pi)) = do
+    ni      <- type_instr_g (Just t) i
+    return (Last ni, Just pi)
 
 
 
