@@ -338,8 +338,10 @@ type_type (Access (Ident nm,p))   = do
 -- Context can be specified
 type_get :: Maybe Integer -> String -> AlexPosn -> Env Recorded
 type_get mc nm p = do
-    b <- is_declared nm
-    if b then lerror p $ nm ++ " is not a type name" else return ()
+    b1 <- is_declared nm
+    b2 <- hasVar nm
+    b3 <- hasFun nm
+    if b1 || b2 || b3  then lerror p $ nm ++ " is not a type name" else return ()
     mt <- case mc of
            Just c  -> getTpeC c nm
            Nothing -> getTpe nm
