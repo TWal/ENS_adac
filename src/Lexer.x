@@ -6,7 +6,6 @@ module Lexer (
     scanner,
     Alex,
     Position(..),
-    AlexPosn(..),
     Token(..)
 ) where
 
@@ -149,11 +148,13 @@ alexError' :: String -> Alex a
 alexError' msg =
     do
       fp <- getFilePath
-      ((AlexPn _ l c), _, _, _) <- alexGetInput
-      alexError ("File \"" ++ fp ++ "\", line " ++ show l ++ ", characters " ++ show c ++ "-" ++ show (c+1)
-          ++ ":\n" ++ msg)
+      (pos, _, _, _) <- alexGetInput
+      alexError ((show (Position pos fp)) ++ ":\n" ++ msg)
 
-data Position = Position AlexPosn FilePath deriving (Eq, Show)
+data Position = Position AlexPosn FilePath deriving (Eq)
+
+instance Show Position where
+    show (Position (AlexPn _ l c) fp) = "File \"" ++ fp ++ "\", line " ++ show l ++ ", characters " ++ show c ++ "-" ++ show (c+1)
 
 data Token =
       TokenInt (Position, Integer)
@@ -208,6 +209,60 @@ data Token =
     | TokenDoubledot Position
     | TokenCharval Position
     | TokenEOF Position
-    deriving (Eq, Show)
+    deriving (Eq)
 
+
+instance Show Token where
+    show (TokenInt (_, i)) = show i
+    show (TokenIdent (_, s)) = s
+    show (TokenChar (_, c)) = '\'' : c : '\'' : []
+    show (TokenAccess _) = "access"
+    show (TokenFalse _) = "false"
+    show (TokenLoop _) = "loop"
+    show (TokenProcedure _) = "procedure"
+    show (TokenTrue _) = "true"
+    show (TokenAnd _) = "and"
+    show (TokenFor _) = "for"
+    show (TokenNew _) = "new"
+    show (TokenRecord _) = "record"
+    show (TokenType _) = "type"
+    show (TokenBegin _) = "begin"
+    show (TokenFunction _) = "function"
+    show (TokenNot _) = "not"
+    show (TokenUse _) = "use"
+    show (TokenElse _) = "else"
+    show (TokenIf _) = "if"
+    show (TokenNull _) = "null"
+    show (TokenReturn _) = "return"
+    show (TokenWhile _) = "while"
+    show (TokenElsif _) = "elsif"
+    show (TokenIn _) = "in"
+    show (TokenOr _) = "or"
+    show (TokenReverse _) = "reverse"
+    show (TokenWith _) = "with"
+    show (TokenEnd _) = "end"
+    show (TokenIs _) = "is"
+    show (TokenOut _) = "out"
+    show (TokenThen _) = "then"
+    show (TokenEqual _) = "="
+    show (TokenNotEqual _) = "/="
+    show (TokenLower _) = "<"
+    show (TokenLowerEqual _) = "<="
+    show (TokenGreater _) = ">"
+    show (TokenGreaterEqual _) = ">="
+    show (TokenAdd _) = "+"
+    show (TokenSubtract _) = "-"
+    show (TokenMultiply _) = "*"
+    show (TokenDivide _) = "/"
+    show (TokenLParent _) = "("
+    show (TokenRParent _) = ")"
+    show (TokenRem _) = "rem"
+    show (TokenAssign _) = ":="
+    show (TokenSemicolon _) = ";"
+    show (TokenDot _) = "."
+    show (TokenColon _) = ":"
+    show (TokenComma _) = ","
+    show (TokenDoubledot _) = ".."
+    show (TokenCharval _) = "character'val"
+    show (TokenEOF _) = "<EOF>"
 }

@@ -215,7 +215,7 @@ lexWrap :: (Token -> Alex a) -> Alex a
 lexWrap = (alexMonadScan' >>=)
 
 happyError :: Token -> Alex a
-happyError t = alexError' ("parse error: at token " ++ show t)
+happyError t = alexError' ("parse error at token `" ++ show t ++ "`")
 
 parseExp :: String -> FilePath -> Either String (Ann Expr Position)
 parseExp s fp = runAlex' s fp parseExpn
