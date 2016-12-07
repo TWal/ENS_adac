@@ -1,5 +1,6 @@
 module Asm where
 import Data.Char (toLower)
+import Control.Monad.State
 
 data Register =
     Rax | Rbx | Rcx | Rdx | Rsi | Rdi | Rbp | Rsp | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15
@@ -7,6 +8,8 @@ data Register =
   | Ax  | Bx  | Cx  | Dx  | Si  | Di  | Bp  | Sp  | R8w | R9w | R10w | R11w | R12w | R13w | R14w | R15w
   | Al  | Bl  | Cl  | Dl  | Ah  | Bh  | Ch  | Dh  | Sil | Dil | Bpl  | Spl  | R8b  | R9b  | R10b | R11b | R12b | R13b | R14b | R15b
     deriving (Show)
+
+data Label = Label String
 
 rax = Rax
 rbx = Rbx
@@ -77,53 +80,76 @@ r13b = R13b
 r14b = R14b
 r15b = R15b
 
+
 class Argument a where
     arg :: a -> String
 
 instance Argument Integer where
     arg i = "$" ++ show i
 
+instance Argument Label where
+    arg (Label s) = s
+
 instance Argument Register where
     arg r = case (show r) of
               x:xs -> '%':(toLower x):xs
               [] -> "%" -- shouldn't happen
 
-ins0 :: String -> String
-ins0 s = s ++ "\n"
+type Asm = State (String, Integer)
 
-ins1 :: (Argument a) => String -> a -> String
-ins1 s r = s ++ " " ++ arg r ++ "\n"
+addCode :: String -> Asm ()
+addCode s = state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
 
-ins2 :: (Argument a, Argument b) => String -> a -> b -> String
-ins2 s r1 r2 = s ++ " " ++ arg r1 ++ " " ++ arg r2 ++ "\n"
+getLabel :: Asm Label
+getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
 
--- TODO: see if there is a way not to give the type...
-movb :: (Argument a, Argument b) => a -> b -> String
-movw :: (Argument a, Argument b) => a -> b -> String
-movl :: (Argument a, Argument b) => a -> b -> String
-movq :: (Argument a, Argument b) => a -> b -> String
+getAssembly :: Asm a -> String
+getAssembly = fst . flip execState ("", 0)
+
+-- Helper functions
+ins0 :: String -> Asm ()
+ins0 s = addCode s
+
+ins1 :: Argument a => String -> a -> Asm ()
+ins1 s r1 = addCode $ s ++ " " ++ arg r1
+
+ins2 :: (Argument a, Argument b) => String -> a -> b -> Asm ()
+ins2 s r1 r2 = addCode $ s ++ " " ++ arg r1 ++ " " ++ arg r2
+
+-- To make jmp *label
+star :: Label -> Label
+star (Label s) = Label ('*':s)
+
+-- Instructions
+label :: Label -> Asm ()
+label (Label s) = addCode $ s ++ ":"
+
+movb :: (Argument a, Argument b) => a -> b -> Asm ()
+movw :: (Argument a, Argument b) => a -> b -> Asm ()
+movl :: (Argument a, Argument b) => a -> b -> Asm ()
+movq :: (Argument a, Argument b) => a -> b -> Asm ()
 movb = ins2 "movb"
 movw = ins2 "movw"
 movl = ins2 "movl"
 movq = ins2 "movq"
 
 -- TODO: the first or second argument should be an integer
-movabsq :: (Argument a, Argument b) => a -> b -> String
-movsbw :: (Argument a, Argument b) => a -> b -> String
-movsbl :: (Argument a, Argument b) => a -> b -> String
-movsbq :: (Argument a, Argument b) => a -> b -> String
-movswl :: (Argument a, Argument b) => a -> b -> String
-movswq :: (Argument a, Argument b) => a -> b -> String
-movslq :: (Argument a, Argument b) => a -> b -> String
-movzbw :: (Argument a, Argument b) => a -> b -> String
-movzbl :: (Argument a, Argument b) => a -> b -> String
-movzbq :: (Argument a, Argument b) => a -> b -> String
-movzwl :: (Argument a, Argument b) => a -> b -> String
-movzwq :: (Argument a, Argument b) => a -> b -> String
-leab :: (Argument a, Argument b) => a -> b -> String
-leaw :: (Argument a, Argument b) => a -> b -> String
-leal :: (Argument a, Argument b) => a -> b -> String
-leaq :: (Argument a, Argument b) => a -> b -> String
+movabsq :: (Argument a, Argument b) => a -> b -> Asm ()
+movsbw :: (Argument a, Argument b) => a -> b -> Asm ()
+movsbl :: (Argument a, Argument b) => a -> b -> Asm ()
+movsbq :: (Argument a, Argument b) => a -> b -> Asm ()
+movswl :: (Argument a, Argument b) => a -> b -> Asm ()
+movswq :: (Argument a, Argument b) => a -> b -> Asm ()
+movslq :: (Argument a, Argument b) => a -> b -> Asm ()
+movzbw :: (Argument a, Argument b) => a -> b -> Asm ()
+movzbl :: (Argument a, Argument b) => a -> b -> Asm ()
+movzbq :: (Argument a, Argument b) => a -> b -> Asm ()
+movzwl :: (Argument a, Argument b) => a -> b -> Asm ()
+movzwq :: (Argument a, Argument b) => a -> b -> Asm ()
+leab :: (Argument a, Argument b) => a -> b -> Asm ()
+leaw :: (Argument a, Argument b) => a -> b -> Asm ()
+leal :: (Argument a, Argument b) => a -> b -> Asm ()
+leaq :: (Argument a, Argument b) => a -> b -> Asm ()
 movabsq = ins2 "movabsq"
 movsbw = ins2 "movsbw"
 movsbl = ins2 "movsbl"
@@ -141,18 +167,18 @@ leaw = ins2 "leaw"
 leal = ins2 "leal"
 leaq = ins2 "leaq"
 
-incb :: (Argument a) => a -> String
-incw :: (Argument a) => a -> String
-incl :: (Argument a) => a -> String
-incq :: (Argument a) => a -> String
-decb :: (Argument a) => a -> String
-decw :: (Argument a) => a -> String
-decl :: (Argument a) => a -> String
-decq :: (Argument a) => a -> String
-negb :: (Argument a) => a -> String
-negw :: (Argument a) => a -> String
-negl :: (Argument a) => a -> String
-negq :: (Argument a) => a -> String
+incb :: (Argument a) => a -> Asm ()
+incw :: (Argument a) => a -> Asm ()
+incl :: (Argument a) => a -> Asm ()
+incq :: (Argument a) => a -> Asm ()
+decb :: (Argument a) => a -> Asm ()
+decw :: (Argument a) => a -> Asm ()
+decl :: (Argument a) => a -> Asm ()
+decq :: (Argument a) => a -> Asm ()
+negb :: (Argument a) => a -> Asm ()
+negw :: (Argument a) => a -> Asm ()
+negl :: (Argument a) => a -> Asm ()
+negq :: (Argument a) => a -> Asm ()
 incb = ins1 "incb"
 incw = ins1 "incw"
 incl = ins1 "incl"
@@ -166,17 +192,17 @@ negw = ins1 "negw"
 negl = ins1 "negl"
 negq = ins1 "negq"
 
-addb :: (Argument a, Argument b) => a -> b -> String
-addw :: (Argument a, Argument b) => a -> b -> String
-addl :: (Argument a, Argument b) => a -> b -> String
-addq :: (Argument a, Argument b) => a -> b -> String
-subb :: (Argument a, Argument b) => a -> b -> String
-subw :: (Argument a, Argument b) => a -> b -> String
-subl :: (Argument a, Argument b) => a -> b -> String
-subq :: (Argument a, Argument b) => a -> b -> String
-imulw :: (Argument a, Argument b) => a -> b -> String
-imull :: (Argument a, Argument b) => a -> b -> String
-imulq :: (Argument a, Argument b) => a -> b -> String
+addb :: (Argument a, Argument b) => a -> b -> Asm ()
+addw :: (Argument a, Argument b) => a -> b -> Asm ()
+addl :: (Argument a, Argument b) => a -> b -> Asm ()
+addq :: (Argument a, Argument b) => a -> b -> Asm ()
+subb :: (Argument a, Argument b) => a -> b -> Asm ()
+subw :: (Argument a, Argument b) => a -> b -> Asm ()
+subl :: (Argument a, Argument b) => a -> b -> Asm ()
+subq :: (Argument a, Argument b) => a -> b -> Asm ()
+imulw :: (Argument a, Argument b) => a -> b -> Asm ()
+imull :: (Argument a, Argument b) => a -> b -> Asm ()
+imulq :: (Argument a, Argument b) => a -> b -> Asm ()
 
 addb = ins2 "addb"
 addw = ins2 "addw"
@@ -190,15 +216,15 @@ imulw = ins2 "imulw"
 imull = ins2 "imull"
 imulq = ins2 "imulq"
 
-idivq :: (Argument a) => a -> String
-cqto :: String
+idivq :: (Argument a) => a -> Asm ()
+cqto :: Asm ()
 idivq = ins1 "idivq"
 cqto = ins0 "cqto"
 
-notb :: (Argument a) => a -> String
-notw :: (Argument a) => a -> String
-notl :: (Argument a) => a -> String
-notq :: (Argument a) => a -> String
+notb :: (Argument a) => a -> Asm ()
+notw :: (Argument a) => a -> Asm ()
+notl :: (Argument a) => a -> Asm ()
+notq :: (Argument a) => a -> Asm ()
 
 notb = ins1 "notb"
 notw = ins1 "notw"
@@ -206,30 +232,30 @@ notl = ins1 "notl"
 notq = ins1 "notq"
 
 
-andb :: (Argument a, Argument b) => a -> b -> String
-andw :: (Argument a, Argument b) => a -> b -> String
-andl :: (Argument a, Argument b) => a -> b -> String
-andq :: (Argument a, Argument b) => a -> b -> String
-orb :: (Argument a, Argument b) => a -> b -> String
-orw :: (Argument a, Argument b) => a -> b -> String
-orl :: (Argument a, Argument b) => a -> b -> String
-orq :: (Argument a, Argument b) => a -> b -> String
-xorb :: (Argument a, Argument b) => a -> b -> String
-xorw :: (Argument a, Argument b) => a -> b -> String
-xorl :: (Argument a, Argument b) => a -> b -> String
-xorq :: (Argument a, Argument b) => a -> b -> String
-shlb :: (Argument a, Argument b) => a -> b -> String
-shlw :: (Argument a, Argument b) => a -> b -> String
-shll :: (Argument a, Argument b) => a -> b -> String
-shlq :: (Argument a, Argument b) => a -> b -> String
-shrb :: (Argument a, Argument b) => a -> b -> String
-shrw :: (Argument a, Argument b) => a -> b -> String
-shrl :: (Argument a, Argument b) => a -> b -> String
-shrq :: (Argument a, Argument b) => a -> b -> String
-sarb :: (Argument a, Argument b) => a -> b -> String
-sarw :: (Argument a, Argument b) => a -> b -> String
-sarl :: (Argument a, Argument b) => a -> b -> String
-sarq :: (Argument a, Argument b) => a -> b -> String
+andb :: (Argument a, Argument b) => a -> b -> Asm ()
+andw :: (Argument a, Argument b) => a -> b -> Asm ()
+andl :: (Argument a, Argument b) => a -> b -> Asm ()
+andq :: (Argument a, Argument b) => a -> b -> Asm ()
+orb :: (Argument a, Argument b) => a -> b -> Asm ()
+orw :: (Argument a, Argument b) => a -> b -> Asm ()
+orl :: (Argument a, Argument b) => a -> b -> Asm ()
+orq :: (Argument a, Argument b) => a -> b -> Asm ()
+xorb :: (Argument a, Argument b) => a -> b -> Asm ()
+xorw :: (Argument a, Argument b) => a -> b -> Asm ()
+xorl :: (Argument a, Argument b) => a -> b -> Asm ()
+xorq :: (Argument a, Argument b) => a -> b -> Asm ()
+shlb :: (Argument a, Argument b) => a -> b -> Asm ()
+shlw :: (Argument a, Argument b) => a -> b -> Asm ()
+shll :: (Argument a, Argument b) => a -> b -> Asm ()
+shlq :: (Argument a, Argument b) => a -> b -> Asm ()
+shrb :: (Argument a, Argument b) => a -> b -> Asm ()
+shrw :: (Argument a, Argument b) => a -> b -> Asm ()
+shrl :: (Argument a, Argument b) => a -> b -> Asm ()
+shrq :: (Argument a, Argument b) => a -> b -> Asm ()
+sarb :: (Argument a, Argument b) => a -> b -> Asm ()
+sarw :: (Argument a, Argument b) => a -> b -> Asm ()
+sarl :: (Argument a, Argument b) => a -> b -> Asm ()
+sarq :: (Argument a, Argument b) => a -> b -> Asm ()
 
 andb = ins2 "andb"
 andw = ins2 "andw"
@@ -256,30 +282,30 @@ sarw = ins2 "sarw"
 sarl = ins2 "sarl"
 sarq = ins2 "sarq"
 
-jmp :: (Argument a) => a -> String
-call :: (Argument a) => a -> String
+jmp :: (Argument a) => a -> Asm ()
+call :: (Argument a) => a -> Asm ()
 jmp = ins1 "jmp"
 call = ins1 "jmp"
 
-leave :: String
-ret :: String
+leave :: Asm ()
+ret :: Asm ()
 leave = ins0 "leave"
 ret = ins0 "ret"
 
-je :: (Argument a) => a -> String
-jz :: (Argument a) => a -> String
-jne :: (Argument a) => a -> String
-jnz :: (Argument a) => a -> String
-js :: (Argument a) => a -> String
-jns :: (Argument a) => a -> String
-jg :: (Argument a) => a -> String
-jge :: (Argument a) => a -> String
-jl :: (Argument a) => a -> String
-jle :: (Argument a) => a -> String
-ja :: (Argument a) => a -> String
-jae :: (Argument a) => a -> String
-jb :: (Argument a) => a -> String
-jbe :: (Argument a) => a -> String
+je :: (Argument a) => a -> Asm ()
+jz :: (Argument a) => a -> Asm ()
+jne :: (Argument a) => a -> Asm ()
+jnz :: (Argument a) => a -> Asm ()
+js :: (Argument a) => a -> Asm ()
+jns :: (Argument a) => a -> Asm ()
+jg :: (Argument a) => a -> Asm ()
+jge :: (Argument a) => a -> Asm ()
+jl :: (Argument a) => a -> Asm ()
+jle :: (Argument a) => a -> Asm ()
+ja :: (Argument a) => a -> Asm ()
+jae :: (Argument a) => a -> Asm ()
+jb :: (Argument a) => a -> Asm ()
+jbe :: (Argument a) => a -> Asm ()
 je = ins1 "je"
 jz = ins1 "jz"
 jne = ins1 "jne"
@@ -295,14 +321,14 @@ jae = ins1 "jae"
 jb = ins1 "jb"
 jbe = ins1 "jbe"
 
-cmpb :: (Argument a, Argument b) => a -> b -> String
-cmpw :: (Argument a, Argument b) => a -> b -> String
-cmpl :: (Argument a, Argument b) => a -> b -> String
-cmpq :: (Argument a, Argument b) => a -> b -> String
-testb :: (Argument a, Argument b) => a -> b -> String
-testw :: (Argument a, Argument b) => a -> b -> String
-testl :: (Argument a, Argument b) => a -> b -> String
-testq :: (Argument a, Argument b) => a -> b -> String
+cmpb :: (Argument a, Argument b) => a -> b -> Asm ()
+cmpw :: (Argument a, Argument b) => a -> b -> Asm ()
+cmpl :: (Argument a, Argument b) => a -> b -> Asm ()
+cmpq :: (Argument a, Argument b) => a -> b -> Asm ()
+testb :: (Argument a, Argument b) => a -> b -> Asm ()
+testw :: (Argument a, Argument b) => a -> b -> Asm ()
+testl :: (Argument a, Argument b) => a -> b -> Asm ()
+testq :: (Argument a, Argument b) => a -> b -> Asm ()
 
 cmpb = ins2 "cmpb"
 cmpw = ins2 "cmpw"
@@ -313,18 +339,18 @@ testw = ins2 "testw"
 testl = ins2 "testl"
 testq = ins2 "testq"
 
-sete :: (Argument a) => a -> String
-setne :: (Argument a) => a -> String
-sets :: (Argument a) => a -> String
-setns :: (Argument a) => a -> String
-setg :: (Argument a) => a -> String
-setge :: (Argument a) => a -> String
-setl :: (Argument a) => a -> String
-setle :: (Argument a) => a -> String
-seta :: (Argument a) => a -> String
-setae :: (Argument a) => a -> String
-setb :: (Argument a) => a -> String
-setbe :: (Argument a) => a -> String
+sete :: (Argument a) => a -> Asm ()
+setne :: (Argument a) => a -> Asm ()
+sets :: (Argument a) => a -> Asm ()
+setns :: (Argument a) => a -> Asm ()
+setg :: (Argument a) => a -> Asm ()
+setge :: (Argument a) => a -> Asm ()
+setl :: (Argument a) => a -> Asm ()
+setle :: (Argument a) => a -> Asm ()
+seta :: (Argument a) => a -> Asm ()
+setae :: (Argument a) => a -> Asm ()
+setb :: (Argument a) => a -> Asm ()
+setbe :: (Argument a) => a -> Asm ()
 
 sete = ins1 "sete"
 setne = ins1 "setne"
@@ -339,6 +365,16 @@ setae = ins1 "setae"
 setb = ins1 "setb"
 setbe = ins1 "setbe"
 
-label :: String -> String
-label s = s ++ ":\n"
-
+dumbAssembly = do
+    movq rax rbx
+    l <- getLabel
+    testq rax rax
+    jz l
+    l' <- getLabel
+    jnz l'
+    label l
+    addq rax rbx
+    ret
+    label l'
+    subq rax rbx
+    ret
