@@ -34,14 +34,8 @@ data Typed = TInteger
            | TRecord TId
            | TAccess TId
            | TypeNull
-instance Eq Typed where
-    TInteger   == TInteger   = True
-    TCharacter == TCharacter = True
-    TBoolean   == TBoolean   = True
-    TRecord n1 == TRecord n2 = n1 == n2
-    TAccess n1 == TAccess n2 = n1 == n2
-    TypeNull   == TypeNull   = True
-    _          == _          = False
+           deriving (Eq)
+
 is_access :: Typed -> Bool
 is_access (TAccess _) = True
 is_access _           = False
@@ -170,6 +164,7 @@ hasName n = do
     b2 <- hasFun n
     b3 <- hasTpe n
     return $ b1 || b2 || b3
+
 -- Search in one specified context
 hasVarC c = (CM.liftM $ isJust) . (getVarC c)
 hasFunC c = (CM.liftM $ isJust) . (getFunC c)
@@ -179,6 +174,7 @@ hasNameC c n = do
     b2 <- hasFunC c n
     b3 <- hasTpeC c n
     return $ b1 || b2 || b3
+
 -- Search on the top of the Pile
 hasVarL v = do
     e <- S.get
@@ -197,6 +193,7 @@ hasNameL n = do
     b2 <- hasFunL n
     b3 <- hasTpeL n
     return $ b1 || b2 || b3
+
 -- Search is only local
 is_declared :: String -> Env Bool
 is_declared n = S.get >>= \e -> return $ St.member n $ declared $ snd $ phead e
@@ -579,21 +576,8 @@ type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
          else lerror peb $ "can't compare " ++ show te1 ++ " and " ++ show te2
       return (TEBinop (cvbnp b) ne1 ne2, CType TBoolean False True)
  where cvbnp :: Binop Position -> Binop ()
-       cvbnp Equal        = Equal
-       cvbnp NotEqual     = NotEqual
-       cvbnp Lower        = Lower
-       cvbnp LowerEqual   = LowerEqual
-       cvbnp Greater      = Greater
-       cvbnp GreaterEqual = GreaterEqual
-       cvbnp Add          = Add
-       cvbnp Subtract     = Subtract
-       cvbnp Multiply     = Multiply
-       cvbnp Divide       = Divide
-       cvbnp Rem          = Rem
-       cvbnp And          = And
-       cvbnp AndThen      = AndThen
-       cvbnp Or           = Or
-       cvbnp OrElse       = OrElse
+       cvbnp = fmap (const ())
+
 type_expr (EUnop (Not, pu) e@(_,pe), pun) = do
     ne@(_,cte@(CType te _ b)) <- type_expr e
     if not b then lerror pe "is not rvalue" else return ()
@@ -644,7 +628,7 @@ cmppr (e@(_,pe),(s,CType t o i)) = do
 
 type_access :: Acces Position -> Env (TAccess,CType)
 type_access (AccesIdent (Ident s,p)) = do
-    v <- getVar s 
+    v <- getVar s
     case v of
      Nothing -> lerror p $ s ++ " is not defined"
      Just t  -> return (AccessFull s, t)
@@ -742,8 +726,8 @@ type_instr_g t (IIf e l lxs ml, pif) = do
 type_instr_g t (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
     ne1@(_, CType te1 _ b1) <- type_expr e1
     ne2@(_, CType te2 _ b2) <- type_expr e2
-    if not b1 then lerror pe1 "expecting a rvalue" 
-    else if not b2 then lerror pe2 "expecting a rvalue" 
+    if not b1 then lerror pe1 "expecting a rvalue"
+    else if not b2 then lerror pe2 "expecting a rvalue"
     else return ()
     if te1 /= TInteger then lerror pe1 $ "expecting a integer, got a " ++ show te1
     else if te2 /= TInteger then lerror pe2 $ "expecting a integer, got a" ++ show te2

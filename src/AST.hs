@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor #-}
 module AST (
     NonEmptyList(..),
     Ann,
@@ -78,7 +79,7 @@ data Instr b =
 data Binop b = Equal | NotEqual | Lower | LowerEqual | Greater | GreaterEqual
            | Add | Subtract | Multiply | Divide | Rem
            | And | AndThen | Or | OrElse
-           deriving (Eq, Show)
+           deriving (Eq, Show, Functor)
 
 data Unop b = Not | Negate deriving (Eq, Show)
 
