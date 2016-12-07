@@ -119,11 +119,17 @@ contextOf s = do
 
 findFromContextL :: String -> (Integer,Map String a) -> Maybe a
 findFromContextL s (_,mp) = if M.member s mp then Just $ mp ! s else Nothing
-findFromContext :: String -> Pile (Integer,Map String a) -> Maybe a
-findFromContext s ((_,mp) :^: xs) = if M.member s mp then Just $ mp ! s
-                                                     else findFromContext s xs
-findFromContext s (Bottom (_,mp)) = if M.member s mp then Just $ mp ! s
-                                                     else Nothing
+findFromContext :: String
+                -> Pile (Integer,(Map String a,Map String b,Map String c))
+                -> Maybe a
+findFromContext s ((_,(mp,f1,f2)) :^: xs) = 
+    if (M.member s f1) || (M.member s f2) then Nothing
+    else if M.member s mp then Just $ mp ! s
+    else findFromContext s xs
+findFromContext s (Bottom (_,(mp,f1,f2))) = 
+    if (M.member s f1) || (M.member s f2) then Nothing
+    else if M.member s mp then Just $ mp ! s
+    else Nothing
 
 findWithContext :: Integer -> String -> Pile (Integer,Map String a) -> Maybe a
 findWithContext c s ((n,mp) :^: xs) =
@@ -135,7 +141,8 @@ findWithContext c s (Bottom (n,mp)) =
                    else Nothing
     else Nothing
 
-mget :: (Context -> Map String a) -> String -> Env (Maybe a)
+mget :: (Context -> (Map String a, Map String b, Map String c))
+     -> String -> Env (Maybe a)
 mget ext s = S.get
     >>= \e -> return $ findFromContext s $ fmap (extract ext) e
 mgetC :: (Context -> Map String a) -> Integer -> String -> Env (Maybe a)
@@ -145,13 +152,13 @@ mgetL :: (Context -> Map String a) -> String -> Env (Maybe a)
 mgetL ext s = S.get
     >>= \e -> return $ findFromContextL s $ extract ext $ phead e
 
-getVar  = mget  variables
+getVar  = mget  $ \m -> (variables m, types m, functions m)
 getVarC = mgetC variables
 getVarL = mgetL variables
-getFun  = mget  functions
+getFun  = mget  $ \m -> (functions m, variables m, types m)
 getFunC = mgetC functions
 getFunL = mgetL functions
-getTpe  = mget  types
+getTpe  = mget  $ \m -> (types m, variables m, functions m)
 getTpeC = mgetC types
 getTpeL = mgetL types
 
@@ -333,14 +340,12 @@ type_type (Access (Ident nm,p))   = do
 -- Context can be specified
 type_get :: Maybe Integer -> String -> Position -> Env Recorded
 type_get mc nm p = do
-    b1 <- is_declared nm
-    b2 <- hasVar nm
-    b3 <- hasFun nm
-    if b1 || b2 || b3  then lerror p $ nm ++ " is not a type name" else return ()
+    b <- is_declared nm
+    if b then lerror p $ "type " ++ nm ++ "not declared/shadowed" else return ()
     mt <- case mc of
            Just c  -> getTpeC c nm
            Nothing -> getTpe nm
-    merror p ("type " ++ nm ++ " not declared") mt
+    merror p ("type " ++ nm ++ " not declared/shadowed") mt
 
 -- lookup type recursively over aliases
 -- Context can be specified
