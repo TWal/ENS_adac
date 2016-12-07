@@ -399,6 +399,8 @@ type_decls dcls p = do
            r <- type_champs lcs
            addt_if tds pr nm (Record r)
        td (DAssign ids (tp, ptp) (Just e@(_,pe)), pa) tds = do
+           let lids = non_empty_to_list ids
+           CM.mapM_ (declare . \(Ident s,_) -> s) lids
            t  <- type_type tp
            ne@(_,te) <- type_expr e
            case (t,te) of
@@ -407,13 +409,13 @@ type_decls dcls p = do
             (_, CType t2 _ _)              -> if t == t2 then return ()
                 else lerror pe $ show t2 ++ " is not compatible with " ++ show t
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
-               $ (CType t True True,Just $ Left ne)) tds
-               $ non_empty_to_list ids
+               $ (CType t True True,Just $ Left ne)) tds lids
        td (DAssign ids (tp, ptp) Nothing, pa) tds = do
+           let lids = non_empty_to_list ids
+           CM.mapM_ (declare . \(Ident s,_) -> s) lids
            t  <- type_type tp
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
-               $ (CType t True True,Nothing)) tds
-               $ non_empty_to_list ids
+               $ (CType t True True,Nothing)) tds lids
        td (DProcedure (Ident nm, p) mprs dcls instrs mnm,ppr) tds = do
            check_declared ppr
            let nm2 = case mnm of
