@@ -1,4 +1,23 @@
-module Asm where
+module Asm (
+    Register, Label, Memory(..), Star, RValue(..), LValue(..), Jmpable(..),
+    getLabel, getAssembly, star,
+    rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, r8, r9, r10, r11, r12, r13, r14, r15,
+    eax, ebx, ecx, edx, esi, edi, ebp, esp, r8d, r9d, r10d, r11d, r12d, r13d, r14d, r15d,
+    ax , bx , cx , dx , si , di , bp , sp , r8w, r9w, r10w, r11w, r12w, r13w, r14w, r15w,
+    al , bl , cl , dl , ah , bh , ch , dh , sil, dil, bpl , spl , r8b , r9b , r10b, r11b, r12b, r13b, r14b, r15b,
+    movb, movw, movl, movq, movabsq, movsbw, movsbl, movsbq, movswl, movswq, movslq, movzbw, movzbl, movzbq, movzwl, movzwq, pushq, popq,
+    leab, leaw, leal, leaq, incb, incw, incl, incq, decb, decw, decl, decq, negb, negw, negl, negq, notb, notw, notl, notq,
+    addb, addw, addl, addq, subb, subw, subl, subq, imulw, imull, imulq,
+    xorb, xorw, xorl, xorq, orb, orw, orl, orq, andb, andw, andl, andq,
+    idivl, divl, cltd, idivq, divq, cqto,
+    sarb, sarw, sarl, sarq, shlb, shlw, shll, shlq, shrb, shrw, shrl, shrq,
+    cmpb, cmpw, cmpl, cmpq, testb, testw, testl, testq,
+    je, jne, js, jns, jg, jge, jl, jle, ja, jae, jb, jbe,
+    sete, setne, sets, setns, setg, setge, setl, setle, seta, setae, setb, setbe,
+    cmove, cmovne, cmovs, cmovns, cmovg, cmovge, cmovl, cmovle, cmova, cmovae, cmovb, cmovbe,
+    jmp, call, leave, ret
+) where
+
 import Data.Char (toLower)
 import Control.Monad.State
 
@@ -11,6 +30,69 @@ data Register =
 
 data Label = Label String
 
+data Memory = Memory Register Integer Integer Integer
+
+data Star a = Star a
+
+class RValue a where
+    arg :: a -> String
+
+instance RValue Integer where
+    arg i = "$" ++ show i
+
+instance RValue Label where
+    arg (Label s) = s
+
+instance RValue Register where
+    arg r = case (show r) of
+              x:xs -> '%':(toLower x):xs
+              [] -> "%" -- shouldn't happen
+
+instance RValue Memory where
+    arg (Memory base index scale offset) = (show offset) ++ "(" ++ (arg base) ++ ", " ++ (show index) ++ ", " ++ (show scale) ++ ")"
+
+class (RValue a) => LValue a
+instance LValue Register
+instance LValue Memory
+
+class Jmpable a where
+    labToStr :: a -> String
+
+instance Jmpable Label where
+    labToStr (Label s) = s
+
+instance (RValue a) => Jmpable (Star a) where
+    labToStr (Star x) = "*(" ++ arg x ++ ")"
+
+type Asm = State (String, Integer)
+
+addCode :: String -> Asm ()
+addCode s = state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
+
+getLabel :: Asm Label
+getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
+
+getAssembly :: Asm a -> String
+getAssembly = fst . flip execState ("", 0)
+
+-- Helper functions
+ins0 :: String -> Asm ()
+ins0 s = addCode s
+
+ins1 :: RValue a => String -> a -> Asm ()
+ins1 s r1 = addCode $ s ++ " " ++ arg r1
+
+ins2 :: (RValue a, RValue b) => String -> a -> b -> Asm ()
+ins2 s r1 r2 = addCode $ s ++ " " ++ arg r1 ++ ", " ++ arg r2
+
+genericJump :: (Jmpable a) => String -> a -> Asm ()
+genericJump s l = addCode $ s ++ " " ++ labToStr l
+
+-- To make jmp *(...)
+star :: (RValue a) => a -> Star a
+star = Star
+
+-- Nicer names for registers
 rax = Rax
 rbx = Rbx
 rcx = Rcx
@@ -81,75 +163,34 @@ r14b = R14b
 r15b = R15b
 
 
-class Argument a where
-    arg :: a -> String
-
-instance Argument Integer where
-    arg i = "$" ++ show i
-
-instance Argument Label where
-    arg (Label s) = s
-
-instance Argument Register where
-    arg r = case (show r) of
-              x:xs -> '%':(toLower x):xs
-              [] -> "%" -- shouldn't happen
-
-type Asm = State (String, Integer)
-
-addCode :: String -> Asm ()
-addCode s = state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
-
-getLabel :: Asm Label
-getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
-
-getAssembly :: Asm a -> String
-getAssembly = fst . flip execState ("", 0)
-
--- Helper functions
-ins0 :: String -> Asm ()
-ins0 s = addCode s
-
-ins1 :: Argument a => String -> a -> Asm ()
-ins1 s r1 = addCode $ s ++ " " ++ arg r1
-
-ins2 :: (Argument a, Argument b) => String -> a -> b -> Asm ()
-ins2 s r1 r2 = addCode $ s ++ " " ++ arg r1 ++ " " ++ arg r2
-
--- To make jmp *label
-star :: Label -> Label
-star (Label s) = Label ('*':s)
-
 -- Instructions
 label :: Label -> Asm ()
 label (Label s) = addCode $ s ++ ":"
 
-movb :: (Argument a, Argument b) => a -> b -> Asm ()
-movw :: (Argument a, Argument b) => a -> b -> Asm ()
-movl :: (Argument a, Argument b) => a -> b -> Asm ()
-movq :: (Argument a, Argument b) => a -> b -> Asm ()
+movb :: (RValue a, LValue b) => a -> b -> Asm ()
+movw :: (RValue a, LValue b) => a -> b -> Asm ()
+movl :: (RValue a, LValue b) => a -> b -> Asm ()
+movq :: (RValue a, LValue b) => a -> b -> Asm ()
+
 movb = ins2 "movb"
 movw = ins2 "movw"
 movl = ins2 "movl"
 movq = ins2 "movq"
 
--- TODO: the first or second argument should be an integer
-movabsq :: (Argument a, Argument b) => a -> b -> Asm ()
-movsbw :: (Argument a, Argument b) => a -> b -> Asm ()
-movsbl :: (Argument a, Argument b) => a -> b -> Asm ()
-movsbq :: (Argument a, Argument b) => a -> b -> Asm ()
-movswl :: (Argument a, Argument b) => a -> b -> Asm ()
-movswq :: (Argument a, Argument b) => a -> b -> Asm ()
-movslq :: (Argument a, Argument b) => a -> b -> Asm ()
-movzbw :: (Argument a, Argument b) => a -> b -> Asm ()
-movzbl :: (Argument a, Argument b) => a -> b -> Asm ()
-movzbq :: (Argument a, Argument b) => a -> b -> Asm ()
-movzwl :: (Argument a, Argument b) => a -> b -> Asm ()
-movzwq :: (Argument a, Argument b) => a -> b -> Asm ()
-leab :: (Argument a, Argument b) => a -> b -> Asm ()
-leaw :: (Argument a, Argument b) => a -> b -> Asm ()
-leal :: (Argument a, Argument b) => a -> b -> Asm ()
-leaq :: (Argument a, Argument b) => a -> b -> Asm ()
+movabsq :: (LValue b) => Integer -> b -> Asm ()
+movsbw :: (RValue a, LValue b) => a -> b -> Asm ()
+movsbl :: (RValue a, LValue b) => a -> b -> Asm ()
+movsbq :: (RValue a, LValue b) => a -> b -> Asm ()
+movswl :: (RValue a, LValue b) => a -> b -> Asm ()
+movswq :: (RValue a, LValue b) => a -> b -> Asm ()
+movslq :: (RValue a, LValue b) => a -> b -> Asm ()
+movzbw :: (RValue a, LValue b) => a -> b -> Asm ()
+movzbl :: (RValue a, LValue b) => a -> b -> Asm ()
+movzbq :: (RValue a, LValue b) => a -> b -> Asm ()
+movzwl :: (RValue a, LValue b) => a -> b -> Asm ()
+movzwq :: (RValue a, LValue b) => a -> b -> Asm ()
+pushq :: (RValue a) => a -> Asm ()
+popq :: (LValue a) => a -> Asm ()
 movabsq = ins2 "movabsq"
 movsbw = ins2 "movsbw"
 movsbl = ins2 "movsbl"
@@ -162,23 +203,33 @@ movzbl = ins2 "movzbl"
 movzbq = ins2 "movzbq"
 movzwl = ins2 "movzwl"
 movzwq = ins2 "movzwq"
+pushq = ins1 "pushq"
+popq = ins1 "popq"
+
+leab :: Memory -> Register -> Asm ()
+leaw :: Memory -> Register -> Asm ()
+leal :: Memory -> Register -> Asm ()
+leaq :: Memory -> Register -> Asm ()
+incb :: (LValue a) => a -> Asm ()
+incw :: (LValue a) => a -> Asm ()
+incl :: (LValue a) => a -> Asm ()
+incq :: (LValue a) => a -> Asm ()
+decb :: (LValue a) => a -> Asm ()
+decw :: (LValue a) => a -> Asm ()
+decl :: (LValue a) => a -> Asm ()
+decq :: (LValue a) => a -> Asm ()
+negb :: (LValue a) => a -> Asm ()
+negw :: (LValue a) => a -> Asm ()
+negl :: (LValue a) => a -> Asm ()
+negq :: (LValue a) => a -> Asm ()
+notb :: (RValue a) => a -> Asm ()
+notw :: (RValue a) => a -> Asm ()
+notl :: (RValue a) => a -> Asm ()
+notq :: (RValue a) => a -> Asm ()
 leab = ins2 "leab"
 leaw = ins2 "leaw"
 leal = ins2 "leal"
 leaq = ins2 "leaq"
-
-incb :: (Argument a) => a -> Asm ()
-incw :: (Argument a) => a -> Asm ()
-incl :: (Argument a) => a -> Asm ()
-incq :: (Argument a) => a -> Asm ()
-decb :: (Argument a) => a -> Asm ()
-decw :: (Argument a) => a -> Asm ()
-decl :: (Argument a) => a -> Asm ()
-decq :: (Argument a) => a -> Asm ()
-negb :: (Argument a) => a -> Asm ()
-negw :: (Argument a) => a -> Asm ()
-negl :: (Argument a) => a -> Asm ()
-negq :: (Argument a) => a -> Asm ()
 incb = ins1 "incb"
 incw = ins1 "incw"
 incl = ins1 "incl"
@@ -191,19 +242,22 @@ negb = ins1 "negb"
 negw = ins1 "negw"
 negl = ins1 "negl"
 negq = ins1 "negq"
+notb = ins1 "notb"
+notw = ins1 "notw"
+notl = ins1 "notl"
+notq = ins1 "notq"
 
-addb :: (Argument a, Argument b) => a -> b -> Asm ()
-addw :: (Argument a, Argument b) => a -> b -> Asm ()
-addl :: (Argument a, Argument b) => a -> b -> Asm ()
-addq :: (Argument a, Argument b) => a -> b -> Asm ()
-subb :: (Argument a, Argument b) => a -> b -> Asm ()
-subw :: (Argument a, Argument b) => a -> b -> Asm ()
-subl :: (Argument a, Argument b) => a -> b -> Asm ()
-subq :: (Argument a, Argument b) => a -> b -> Asm ()
-imulw :: (Argument a, Argument b) => a -> b -> Asm ()
-imull :: (Argument a, Argument b) => a -> b -> Asm ()
-imulq :: (Argument a, Argument b) => a -> b -> Asm ()
-
+addb :: (RValue a, LValue b) => a -> b -> Asm ()
+addw :: (RValue a, LValue b) => a -> b -> Asm ()
+addl :: (RValue a, LValue b) => a -> b -> Asm ()
+addq :: (RValue a, LValue b) => a -> b -> Asm ()
+subb :: (RValue a, LValue b) => a -> b -> Asm ()
+subw :: (RValue a, LValue b) => a -> b -> Asm ()
+subl :: (RValue a, LValue b) => a -> b -> Asm ()
+subq :: (RValue a, LValue b) => a -> b -> Asm ()
+imulw :: (RValue a) => a -> Register -> Asm ()
+imull :: (RValue a) => a -> Register -> Asm ()
+imulq :: (RValue a) => a -> Register -> Asm ()
 addb = ins2 "addb"
 addw = ins2 "addw"
 addl = ins2 "addl"
@@ -216,59 +270,63 @@ imulw = ins2 "imulw"
 imull = ins2 "imull"
 imulq = ins2 "imulq"
 
-idivq :: (Argument a) => a -> Asm ()
-cqto :: Asm ()
-idivq = ins1 "idivq"
-cqto = ins0 "cqto"
-
-notb :: (Argument a) => a -> Asm ()
-notw :: (Argument a) => a -> Asm ()
-notl :: (Argument a) => a -> Asm ()
-notq :: (Argument a) => a -> Asm ()
-
-notb = ins1 "notb"
-notw = ins1 "notw"
-notl = ins1 "notl"
-notq = ins1 "notq"
-
-
-andb :: (Argument a, Argument b) => a -> b -> Asm ()
-andw :: (Argument a, Argument b) => a -> b -> Asm ()
-andl :: (Argument a, Argument b) => a -> b -> Asm ()
-andq :: (Argument a, Argument b) => a -> b -> Asm ()
-orb :: (Argument a, Argument b) => a -> b -> Asm ()
-orw :: (Argument a, Argument b) => a -> b -> Asm ()
-orl :: (Argument a, Argument b) => a -> b -> Asm ()
-orq :: (Argument a, Argument b) => a -> b -> Asm ()
-xorb :: (Argument a, Argument b) => a -> b -> Asm ()
-xorw :: (Argument a, Argument b) => a -> b -> Asm ()
-xorl :: (Argument a, Argument b) => a -> b -> Asm ()
-xorq :: (Argument a, Argument b) => a -> b -> Asm ()
-shlb :: (Argument a, Argument b) => a -> b -> Asm ()
-shlw :: (Argument a, Argument b) => a -> b -> Asm ()
-shll :: (Argument a, Argument b) => a -> b -> Asm ()
-shlq :: (Argument a, Argument b) => a -> b -> Asm ()
-shrb :: (Argument a, Argument b) => a -> b -> Asm ()
-shrw :: (Argument a, Argument b) => a -> b -> Asm ()
-shrl :: (Argument a, Argument b) => a -> b -> Asm ()
-shrq :: (Argument a, Argument b) => a -> b -> Asm ()
-sarb :: (Argument a, Argument b) => a -> b -> Asm ()
-sarw :: (Argument a, Argument b) => a -> b -> Asm ()
-sarl :: (Argument a, Argument b) => a -> b -> Asm ()
-sarq :: (Argument a, Argument b) => a -> b -> Asm ()
-
-andb = ins2 "andb"
-andw = ins2 "andw"
-andl = ins2 "andl"
-andq = ins2 "andq"
-orb = ins2 "orb"
-orw = ins2 "orw"
-orl = ins2 "orl"
-orq = ins2 "orq"
+xorb :: (RValue a, LValue b) => a -> b -> Asm ()
+xorw :: (RValue a, LValue b) => a -> b -> Asm ()
+xorl :: (RValue a, LValue b) => a -> b -> Asm ()
+xorq :: (RValue a, LValue b) => a -> b -> Asm ()
+orb :: (RValue a, LValue b) => a -> b -> Asm ()
+orw :: (RValue a, LValue b) => a -> b -> Asm ()
+orl :: (RValue a, LValue b) => a -> b -> Asm ()
+orq :: (RValue a, LValue b) => a -> b -> Asm ()
+andb :: (RValue a, LValue b) => a -> b -> Asm ()
+andw :: (RValue a, LValue b) => a -> b -> Asm ()
+andl :: (RValue a, LValue b) => a -> b -> Asm ()
+andq :: (RValue a, LValue b) => a -> b -> Asm ()
 xorb = ins2 "xorb"
 xorw = ins2 "xorw"
 xorl = ins2 "xorl"
 xorq = ins2 "xorq"
+orb = ins2 "orb"
+orw = ins2 "orw"
+orl = ins2 "orl"
+orq = ins2 "orq"
+andb = ins2 "andb"
+andw = ins2 "andw"
+andl = ins2 "andl"
+andq = ins2 "andq"
+
+
+idivl :: (RValue a) => a -> Asm ()
+divl :: (RValue a) => a -> Asm ()
+cltd :: Asm ()
+idivq :: (RValue a) => a -> Asm ()
+divq :: (RValue a) => a -> Asm ()
+cqto :: Asm ()
+idivl = ins1 "idivl"
+divl = ins1 "divl"
+cltd = ins0 "cltd"
+idivq = ins1 "idivq"
+divq = ins1 "divq"
+cqto = ins0 "cqto"
+
+-- The type of these instructions are quite complicated in reality.
+-- sarl seems to work when the first argument is %cl but not when it is %al...
+sarb :: (RValue a, LValue b) => a -> b -> Asm ()
+sarw :: (RValue a, LValue b) => a -> b -> Asm ()
+sarl :: (RValue a, LValue b) => a -> b -> Asm ()
+sarq :: (RValue a, LValue b) => a -> b -> Asm ()
+shlb :: (RValue a, LValue b) => a -> b -> Asm ()
+shlw :: (RValue a, LValue b) => a -> b -> Asm ()
+shll :: (RValue a, LValue b) => a -> b -> Asm ()
+shlq :: (RValue a, LValue b) => a -> b -> Asm ()
+shrb :: (RValue a, LValue b) => a -> b -> Asm ()
+shrw :: (RValue a, LValue b) => a -> b -> Asm ()
+shrl :: (RValue a, LValue b) => a -> b -> Asm ()
+shrq :: (RValue a, LValue b) => a -> b -> Asm ()
+sarb = ins2 "sarb"
+sarw = ins2 "sarw"
+sarl = ins2 "sarl"
+sarq = ins2 "sarq"
 shlb = ins2 "shlb"
 shlw = ins2 "shlw"
 shll = ins2 "shll"
@@ -277,59 +335,15 @@ shrb = ins2 "shrb"
 shrw = ins2 "shrw"
 shrl = ins2 "shrl"
 shrq = ins2 "shrq"
-sarb = ins2 "sarb"
-sarw = ins2 "sarw"
-sarl = ins2 "sarl"
-sarq = ins2 "sarq"
 
-jmp :: (Argument a) => a -> Asm ()
-call :: (Argument a) => a -> Asm ()
-jmp = ins1 "jmp"
-call = ins1 "jmp"
-
-leave :: Asm ()
-ret :: Asm ()
-leave = ins0 "leave"
-ret = ins0 "ret"
-
-je :: (Argument a) => a -> Asm ()
-jz :: (Argument a) => a -> Asm ()
-jne :: (Argument a) => a -> Asm ()
-jnz :: (Argument a) => a -> Asm ()
-js :: (Argument a) => a -> Asm ()
-jns :: (Argument a) => a -> Asm ()
-jg :: (Argument a) => a -> Asm ()
-jge :: (Argument a) => a -> Asm ()
-jl :: (Argument a) => a -> Asm ()
-jle :: (Argument a) => a -> Asm ()
-ja :: (Argument a) => a -> Asm ()
-jae :: (Argument a) => a -> Asm ()
-jb :: (Argument a) => a -> Asm ()
-jbe :: (Argument a) => a -> Asm ()
-je = ins1 "je"
-jz = ins1 "jz"
-jne = ins1 "jne"
-jnz = ins1 "jnz"
-js = ins1 "js"
-jns = ins1 "jns"
-jg = ins1 "jg"
-jge = ins1 "jge"
-jl = ins1 "jl"
-jle = ins1 "jle"
-ja = ins1 "ja"
-jae = ins1 "jae"
-jb = ins1 "jb"
-jbe = ins1 "jbe"
-
-cmpb :: (Argument a, Argument b) => a -> b -> Asm ()
-cmpw :: (Argument a, Argument b) => a -> b -> Asm ()
-cmpl :: (Argument a, Argument b) => a -> b -> Asm ()
-cmpq :: (Argument a, Argument b) => a -> b -> Asm ()
-testb :: (Argument a, Argument b) => a -> b -> Asm ()
-testw :: (Argument a, Argument b) => a -> b -> Asm ()
-testl :: (Argument a, Argument b) => a -> b -> Asm ()
-testq :: (Argument a, Argument b) => a -> b -> Asm ()
-
+cmpb :: (RValue a, RValue b) => a -> b -> Asm ()
+cmpw :: (RValue a, RValue b) => a -> b -> Asm ()
+cmpl :: (RValue a, RValue b) => a -> b -> Asm ()
+cmpq :: (RValue a, RValue b) => a -> b -> Asm ()
+testb :: (RValue a, RValue b) => a -> b -> Asm ()
+testw :: (RValue a, RValue b) => a -> b -> Asm ()
+testl :: (RValue a, RValue b) => a -> b -> Asm ()
+testq :: (RValue a, RValue b) => a -> b -> Asm ()
 cmpb = ins2 "cmpb"
 cmpw = ins2 "cmpw"
 cmpl = ins2 "cmpl"
@@ -339,39 +353,98 @@ testw = ins2 "testw"
 testl = ins2 "testl"
 testq = ins2 "testq"
 
-sete :: (Argument a) => a -> Asm ()
-setne :: (Argument a) => a -> Asm ()
-sets :: (Argument a) => a -> Asm ()
-setns :: (Argument a) => a -> Asm ()
-setg :: (Argument a) => a -> Asm ()
-setge :: (Argument a) => a -> Asm ()
-setl :: (Argument a) => a -> Asm ()
-setle :: (Argument a) => a -> Asm ()
-seta :: (Argument a) => a -> Asm ()
-setae :: (Argument a) => a -> Asm ()
-setb :: (Argument a) => a -> Asm ()
-setbe :: (Argument a) => a -> Asm ()
+je  :: (Jmpable a) => a -> Asm ()
+jne :: (Jmpable a) => a -> Asm ()
+js  :: (Jmpable a) => a -> Asm ()
+jns :: (Jmpable a) => a -> Asm ()
+jg  :: (Jmpable a) => a -> Asm ()
+jge :: (Jmpable a) => a -> Asm ()
+jl  :: (Jmpable a) => a -> Asm ()
+jle :: (Jmpable a) => a -> Asm ()
+ja  :: (Jmpable a) => a -> Asm ()
+jae :: (Jmpable a) => a -> Asm ()
+jb  :: (Jmpable a) => a -> Asm ()
+jbe :: (Jmpable a) => a -> Asm ()
+je  = genericJump "je"
+jne = genericJump "jne"
+js  = genericJump "js"
+jns = genericJump "jns"
+jg  = genericJump "jg"
+jge = genericJump "jge"
+jl  = genericJump "jl"
+jle = genericJump "jle"
+ja  = genericJump "ja"
+jae = genericJump "jae"
+jb  = genericJump "jb"
+jbe = genericJump "jbe"
 
-sete = ins1 "sete"
+sete  :: (LValue a) => a -> Asm ()
+setne :: (LValue a) => a -> Asm ()
+sets  :: (LValue a) => a -> Asm ()
+setns :: (LValue a) => a -> Asm ()
+setg  :: (LValue a) => a -> Asm ()
+setge :: (LValue a) => a -> Asm ()
+setl  :: (LValue a) => a -> Asm ()
+setle :: (LValue a) => a -> Asm ()
+seta  :: (LValue a) => a -> Asm ()
+setae :: (LValue a) => a -> Asm ()
+setb  :: (LValue a) => a -> Asm ()
+setbe :: (LValue a) => a -> Asm ()
+sete  = ins1 "sete"
 setne = ins1 "setne"
-sets = ins1 "sets"
+sets  = ins1 "sets"
 setns = ins1 "setns"
-setg = ins1 "setg"
+setg  = ins1 "setg"
 setge = ins1 "setge"
-setl = ins1 "setl"
+setl  = ins1 "setl"
 setle = ins1 "setle"
-seta = ins1 "seta"
+seta  = ins1 "seta"
 setae = ins1 "setae"
-setb = ins1 "setb"
+setb  = ins1 "setb"
 setbe = ins1 "setbe"
+
+cmove  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovne :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovs  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovns :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovg  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovge :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovl  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovle :: (RValue a, LValue b) => a -> b -> Asm ()
+cmova  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovae :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovb  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovbe :: (RValue a, LValue b) => a -> b -> Asm ()
+cmove  = ins2 "cmove"
+cmovne = ins2 "cmovne"
+cmovs  = ins2 "cmovs"
+cmovns = ins2 "cmovns"
+cmovg  = ins2 "cmovg"
+cmovge = ins2 "cmovge"
+cmovl  = ins2 "cmovl"
+cmovle = ins2 "cmovle"
+cmova  = ins2 "cmova"
+cmovae = ins2 "cmovae"
+cmovb  = ins2 "cmovb"
+cmovbe = ins2 "cmovbe"
+
+jmp :: (Jmpable a) => a -> Asm ()
+call :: (Jmpable a) => a -> Asm ()
+jmp = genericJump "jmp"
+call = genericJump "call"
+
+leave :: Asm ()
+ret :: Asm ()
+leave = ins0 "leave"
+ret = ins0 "ret"
 
 dumbAssembly = do
     movq rax rbx
     l <- getLabel
     testq rax rax
-    jz l
+    je (star rax)
     l' <- getLabel
-    jnz l'
+    jne l'
     label l
     addq rax rbx
     ret
