@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor, DeriveTraversable #-}
 module AST (
     NonEmptyList(..),
     Ann,
@@ -17,7 +17,7 @@ module AST (
     Acces(..)
 ) where
 
-data NonEmptyList a = Cons a (NonEmptyList a) | Last a deriving (Eq, Show)
+data NonEmptyList a = Cons a (NonEmptyList a) | Last a deriving (Eq, Show, Functor, Traversable, Foldable)
 
 -- a is the "recursion" and b the annoted information
 --data WPos a b = WPos a b deriving (Eq, Show)

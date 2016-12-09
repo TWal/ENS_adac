@@ -7,16 +7,20 @@ import System.IO.Error (catchIOError)
 import Data.Maybe (fromMaybe)
 import Parser
 import Typer
+import CodeGen
+import Asm
 
 data Flag =
     ParseOnly
   | TypeOnly
+  | Full
   deriving (Show, Eq)
 
 options :: [OptDescr Flag]
 options = [
     Option [] ["parse-only"] (NoArg ParseOnly) "parse only",
-    Option [] ["type-only"] (NoArg TypeOnly) "type only"
+    Option [] ["type-only"] (NoArg TypeOnly) "type only",
+    Option [] ["full"] (NoArg Full) "full"
     ]
 
 compilerOpts :: [String] -> IO ([Flag], [String])
@@ -46,12 +50,16 @@ parseOnly source file = addErrorCode 1 $ fmap (const "Parsin' good! :-)") $ pars
 typeOnly :: String -> String -> Either (String, Int) String
 typeOnly source file = addErrorCode 1 $ fmap (const "Typin' good! :-)") $ parseFichier source file >>= (type_program . fst)
 
+full :: String -> String -> Either (String, Int) String
+full source file = addErrorCode 1 $ parseFichier source file >>= (type_program . fst) >>= return . getAssembly . genFichier
+
 main :: IO ()
 main = do
     (args, files) <- getArgs >>= compilerOpts
     (source, filename) <- getSource files
     let res = if ParseOnly `elem` args then parseOnly source filename
               else if TypeOnly `elem` args then typeOnly source filename
+              else if Full `elem` args then full source filename
               else Left ("Halp! Me dunno wat to do!", 2)
     either (\(s, i) -> hPutStrLn stderr s >> exitWith (ExitFailure i))
            (\s -> putStrLn s >> exitWith ExitSuccess)

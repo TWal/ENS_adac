@@ -19,6 +19,7 @@ executable adac
   -- other-extensions:    
   build-depends:       base >=4.9 && <4.10
                      , array, containers, transformers
+                     , mtl
   hs-source-dirs:      src
   ghc-options:         -Wall
   build-tools:         happy, alex

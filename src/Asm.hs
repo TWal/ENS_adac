@@ -1,6 +1,6 @@
 module Asm (
-    Register, Label, Memory(..), Star, RValue(..), LValue(..), Jmpable(..),
-    getLabel, getAssembly, star,
+    Register, Label(..), Memory(..), Star, RValue(..), LValue, Jmpable(..), Asm,
+    getLabel, getAssembly, star, int,
     rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, r8, r9, r10, r11, r12, r13, r14, r15,
     eax, ebx, ecx, edx, esi, edi, ebp, esp, r8d, r9d, r10d, r11d, r12d, r13d, r14d, r15d,
     ax , bx , cx , dx , si , di , bp , sp , r8w, r9w, r10w, r11w, r12w, r13w, r14w, r15w,
@@ -12,10 +12,10 @@ module Asm (
     idivl, divl, cltd, idivq, divq, cqto,
     sarb, sarw, sarl, sarq, shlb, shlw, shll, shlq, shrb, shrw, shrl, shrq,
     cmpb, cmpw, cmpl, cmpq, testb, testw, testl, testq,
-    je, jne, js, jns, jg, jge, jl, jle, ja, jae, jb, jbe,
-    sete, setne, sets, setns, setg, setge, setl, setle, seta, setae, setb, setbe,
-    cmove, cmovne, cmovs, cmovns, cmovg, cmovge, cmovl, cmovle, cmova, cmovae, cmovb, cmovbe,
-    jmp, call, leave, ret
+    je, jne, jz, jnz, js, jns, jg, jge, jl, jle, ja, jae, jb, jbe,
+    sete, setne, setz, setnz, sets, setns, setg, setge, setl, setle, seta, setae, setb, setbe,
+    cmove, cmovne, cmovz, cmovnz, cmovs, cmovns, cmovg, cmovge, cmovl, cmovle, cmova, cmovae, cmovb, cmovbe,
+    label, jmp, call, leave, ret
 ) where
 
 import Data.Char (toLower)
@@ -72,8 +72,26 @@ addCode s = state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
 getLabel :: Asm Label
 getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
 
+beginSource :: String
+beginSource =
+    ".text\n" ++
+    ".globl main\n" ++
+    "main:\n"
+
+endSource :: String
+endSource =
+    "print_int:\n" ++
+    "mov %rdi, %rsi\n" ++
+    "mov $message, %rdi\n" ++
+    "mov $0, %rax\n" ++
+    "call printf\n" ++
+    "ret\n" ++
+    ".data\n" ++
+    "message:.string \"%d\\n\"\n"
+
+
 getAssembly :: Asm a -> String
-getAssembly = fst . flip execState ("", 0)
+getAssembly = (++ endSource) . (beginSource ++) . fst . flip execState ("", 0)
 
 -- Helper functions
 ins0 :: String -> Asm ()
@@ -89,10 +107,82 @@ genericJump :: (Jmpable a) => String -> a -> Asm ()
 genericJump s l = addCode $ s ++ " " ++ labToStr l
 
 -- To make jmp *(...)
-star :: (RValue a) => a -> Star a
+star :: a -> Star a
 star = Star
 
+-- To write (int 42) and not (42 :: Integer)
+int :: (Integral a) => a -> Integer
+int = fromIntegral
+
 -- Nicer names for registers
+rax :: Register
+rbx :: Register
+rcx :: Register
+rdx :: Register
+rsi :: Register
+rdi :: Register
+rbp :: Register
+rsp :: Register
+r8 :: Register
+r9 :: Register
+r10 :: Register
+r11 :: Register
+r12 :: Register
+r13 :: Register
+r14 :: Register
+r15 :: Register
+eax :: Register
+ebx :: Register
+ecx :: Register
+edx :: Register
+esi :: Register
+edi :: Register
+ebp :: Register
+esp :: Register
+r8d :: Register
+r9d :: Register
+r10d :: Register
+r11d :: Register
+r12d :: Register
+r13d :: Register
+r14d :: Register
+r15d :: Register
+ax :: Register
+bx :: Register
+cx :: Register
+dx :: Register
+si :: Register
+di :: Register
+bp :: Register
+sp :: Register
+r8w :: Register
+r9w :: Register
+r10w :: Register
+r11w :: Register
+r12w :: Register
+r13w :: Register
+r14w :: Register
+r15w :: Register
+al :: Register
+bl :: Register
+cl :: Register
+dl :: Register
+ah :: Register
+bh :: Register
+ch :: Register
+dh :: Register
+sil :: Register
+dil :: Register
+bpl :: Register
+spl :: Register
+r8b :: Register
+r9b :: Register
+r10b :: Register
+r11b :: Register
+r12b :: Register
+r13b :: Register
+r14b :: Register
+r15b :: Register
 rax = Rax
 rbx = Rbx
 rcx = Rcx
@@ -164,9 +254,6 @@ r15b = R15b
 
 
 -- Instructions
-label :: Label -> Asm ()
-label (Label s) = addCode $ s ++ ":"
-
 movb :: (RValue a, LValue b) => a -> b -> Asm ()
 movw :: (RValue a, LValue b) => a -> b -> Asm ()
 movl :: (RValue a, LValue b) => a -> b -> Asm ()
@@ -355,6 +442,8 @@ testq = ins2 "testq"
 
 je  :: (Jmpable a) => a -> Asm ()
 jne :: (Jmpable a) => a -> Asm ()
+jz  :: (Jmpable a) => a -> Asm ()
+jnz :: (Jmpable a) => a -> Asm ()
 js  :: (Jmpable a) => a -> Asm ()
 jns :: (Jmpable a) => a -> Asm ()
 jg  :: (Jmpable a) => a -> Asm ()
@@ -367,6 +456,8 @@ jb  :: (Jmpable a) => a -> Asm ()
 jbe :: (Jmpable a) => a -> Asm ()
 je  = genericJump "je"
 jne = genericJump "jne"
+jz  = genericJump "jz"
+jnz = genericJump "jnz"
 js  = genericJump "js"
 jns = genericJump "jns"
 jg  = genericJump "jg"
@@ -380,6 +471,8 @@ jbe = genericJump "jbe"
 
 sete  :: (LValue a) => a -> Asm ()
 setne :: (LValue a) => a -> Asm ()
+setz  :: (LValue a) => a -> Asm ()
+setnz :: (LValue a) => a -> Asm ()
 sets  :: (LValue a) => a -> Asm ()
 setns :: (LValue a) => a -> Asm ()
 setg  :: (LValue a) => a -> Asm ()
@@ -392,6 +485,8 @@ setb  :: (LValue a) => a -> Asm ()
 setbe :: (LValue a) => a -> Asm ()
 sete  = ins1 "sete"
 setne = ins1 "setne"
+setz  = ins1 "setz"
+setnz = ins1 "setnz"
 sets  = ins1 "sets"
 setns = ins1 "setns"
 setg  = ins1 "setg"
@@ -405,6 +500,8 @@ setbe = ins1 "setbe"
 
 cmove  :: (RValue a, LValue b) => a -> b -> Asm ()
 cmovne :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovz  :: (RValue a, LValue b) => a -> b -> Asm ()
+cmovnz :: (RValue a, LValue b) => a -> b -> Asm ()
 cmovs  :: (RValue a, LValue b) => a -> b -> Asm ()
 cmovns :: (RValue a, LValue b) => a -> b -> Asm ()
 cmovg  :: (RValue a, LValue b) => a -> b -> Asm ()
@@ -417,6 +514,8 @@ cmovb  :: (RValue a, LValue b) => a -> b -> Asm ()
 cmovbe :: (RValue a, LValue b) => a -> b -> Asm ()
 cmove  = ins2 "cmove"
 cmovne = ins2 "cmovne"
+cmovz  = ins2 "cmovz"
+cmovnz = ins2 "cmovnz"
 cmovs  = ins2 "cmovs"
 cmovns = ins2 "cmovns"
 cmovg  = ins2 "cmovg"
@@ -428,6 +527,9 @@ cmovae = ins2 "cmovae"
 cmovb  = ins2 "cmovb"
 cmovbe = ins2 "cmovbe"
 
+label :: Label -> Asm ()
+label (Label s) = addCode $ s ++ ":"
+
 jmp :: (Jmpable a) => a -> Asm ()
 call :: (Jmpable a) => a -> Asm ()
 jmp = genericJump "jmp"
@@ -437,17 +539,3 @@ leave :: Asm ()
 ret :: Asm ()
 leave = ins0 "leave"
 ret = ins0 "ret"
-
-dumbAssembly = do
-    movq rax rbx
-    l <- getLabel
-    testq rax rax
-    je (star rax)
-    l' <- getLabel
-    jne l'
-    label l
-    addq rax rbx
-    ret
-    label l'
-    subq rax rbx
-    ret
