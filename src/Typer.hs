@@ -27,37 +27,50 @@ import qualified Debug.Trace as T
 data Pile a = a :^: Pile a | Bottom a
 
 -------------- General types definitions --------------------------------------
-type TId = (Integer,String) -- (level,type name)
-data Typed = TInteger
-           | TCharacter
-           | TBoolean
-           | TRecord TId
-           | TAccess TId
-           | TypeNull
+-- Uniquely identify a type, by its name and level of declaration.
+type TId = (Integer,String)
+-- Internal types
+data Typed = TInteger    -- integer
+           | TCharacter  -- character
+           | TBoolean    -- boolean
+           | TRecord TId -- record, the content of the record
+                         -- can be found in the environment,
+                         -- using the TId
+           | TAccess TId -- Access over a new type
+           | TypeNull    -- Special type for the null expression
            deriving (Eq)
 
 is_access :: Typed -> Bool
 is_access (TAccess _) = True
 is_access _           = False
+-- Represent a fonctionnal object, ie a function or procedure
 data Functionnal = TFunction TParams Typed | TProcedure TParams
+-- Represent the parameters of a function or procedure
 data TParams = TParams [(String,CType)]
-data Recorded = Record (Map String Typed)
-              | RNotDefined
-              | RAlias TId
-              | RNType Typed
+-- Represent user-defined type
+data Recorded = Record (Map String Typed) -- A record, with its members
+              | RNotDefined               -- A type declared but not yet defined
+              | RAlias TId                -- An alias to another user-defined type
+              | RNType Typed              -- An alias to an internal type
 is_defined :: Recorded -> Bool
 is_defined RNotDefined = False
 is_defined _           = True
 
+-- The contextual type of an expression : its internal type and wether it is
+-- a r-value or a l-value (or both)
 data CType = CType Typed Bool Bool
 is_lvalue (CType _ b _) = b
 is_rvalue (CType _ _ b) = b
+-- A context, ie the declaration of a level (and not those of upper or lower levels).
 data Context = Context
-    { variables :: Map String CType
-    , functions :: Map String Functionnal
-    , types     :: Map String Recorded
-    , declared  :: Set String
+    { variables :: Map String CType       -- the contextual types of variables
+    , functions :: Map String Functionnal -- the functionnal objects
+    , types     :: Map String Recorded    -- the user-defined types
+    , declared  :: Set String             -- used to declare identifiers as reserved for variables
+                                          -- and functions, shadow types of the same name
     }
+-- The environment has as state a pile of contexts (with their level stored) and
+-- support string exceptions.
 type Env = S.StateT (Pile (Integer,Context)) (Either String)
 
 -------------- Outputing ------------------------------------------------------
@@ -99,26 +112,34 @@ ptail :: Pile a -> Pile a
 ptail (_ :^: xs) = xs
 ptail bx         = bx -- Maybe it should fail
 
+-- Apply a function on the head of a pile
 update_head :: Pile a -> (a -> a) -> Pile a
 update_head (x :^: xs) f = (f x) :^: xs
 update_head (Bottom x) f = Bottom $ f x
 
+-- Apply a function on the second member of a couple
 extract :: (a -> b) -> (s,a) -> (s,b)
 extract f (x, y) = (x, f y)
 
+-- Give the level of declaration of an identifier in a pile of maps
+-- Returns Nothing if the identifier is not defined
 _contextOf :: String -> Pile (Integer,Map String a) -> Maybe Integer
 _contextOf s ((n,mp) :^: xs) = if M.member s mp then Just n
                                                 else _contextOf s xs
 _contextOf s (Bottom (n,mp)) = if M.member s mp then Just n
                                                 else Nothing
+-- Same as above but for the types
 contextOf :: String -> Env (Maybe Integer)
 contextOf s = do
     e <- S.get
     return $ _contextOf s $ fmap (extract types) e
 
 
+-- Try to find an identifier in a given context
 findFromContextL :: String -> (Integer,Map String a) -> Maybe a
 findFromContextL s (_,mp) = if M.member s mp then Just $ mp ! s else Nothing
+-- Try to find an identifier in a Pile of maps, while failing if it is found
+-- before in any of the others two maps
 findFromContext :: String
                 -> Pile (Integer,(Map String a,Map String b,Map String c))
                 -> Maybe a
@@ -131,6 +152,7 @@ findFromContext s (Bottom (_,(mp,f1,f2))) =
     else if M.member s mp then Just $ mp ! s
     else Nothing
 
+-- Find an identifier in a given context level.
 findWithContext :: Integer -> String -> Pile (Integer,Map String a) -> Maybe a
 findWithContext c s ((n,mp) :^: xs) =
     if n == c then if M.member s mp then Just $ mp ! s
@@ -141,6 +163,7 @@ findWithContext c s (Bottom (n,mp)) =
                    else Nothing
     else Nothing
 
+-- Wrap findWithContext in Env monad
 mget :: (Context -> (Map String a, Map String b, Map String c))
      -> String -> Env (Maybe a)
 mget ext s = S.get
@@ -152,6 +175,12 @@ mgetL :: (Context -> Map String a) -> String -> Env (Maybe a)
 mgetL ext s = S.get
     >>= \e -> return $ findFromContextL s $ extract ext $ phead e
 
+-- get... : try to find the associated variable/type/function, failing if it
+-- is shadowed
+-- get...C : try to find the associated variable/type/function in a given
+-- context level
+-- get...L : try to find the associated variable/type/function at the head
+-- of the context pile
 getVar  = mget  $ \m -> (variables m, types m, functions m)
 getVarC = mgetC variables
 getVarL = mgetL variables
@@ -210,6 +239,7 @@ declare n = do
     S.put $ update_head e
           $ extract $ \c -> c { declared = St.insert n (declared c) }
 
+-- add... : Add a variable/function/type, failing if it is already defined locally
 addVar :: String -> Position -> CType -> Env ()
 addVar s p t = do
     b <- hasNameL s
@@ -226,6 +256,8 @@ addFun s p t = do
     S.put $ update_head e
           $ extract $ \c -> c { functions = M.insert s t (functions c) }
 
+-- Here, also check if the type name is not already declared
+-- In pratice, can not happen
 addTpe :: String -> Position -> Recorded -> Env ()
 addTpe s p t = do
     b1 <- hasVarL s
@@ -246,6 +278,7 @@ addTpe s p t = do
 empty_context :: Context
 empty_context = Context M.empty M.empty M.empty St.empty
 
+-- Handle the pile of contexts
 push_env :: Env ()
 push_env = do
     e <- S.get
@@ -290,19 +323,23 @@ data TInstr =
   | TIWhile TPExpr (NonEmptyList TInstr)
 
 -------------- Getting the typing done ----------------------------------------
-showPos :: Position -> String
-showPos = show
-
+-- Launch an error, with the position
 lerror :: Position -> String -> Env a
 lerror pos s = fail $ (show pos) ++ ":\n" ++ s
 
+-- Launch an error on Nothing, extract the value otherwise
 merror :: Position -> String -> Maybe a -> Env a
 merror p s Nothing  = lerror p s
 merror p s (Just x) = return x
 
+-- Convert an Ident to a String
 fromI :: Ident b -> String
 fromI (Ident s) = s
 
+-- TODO : maybe irrelevant if we make NonEmptyList an instance
+-- of Foldable ?
+
+-- Convert a NonEmptyList to the associated list
 non_empty_to_list :: NonEmptyList a -> [a]
 non_empty_to_list (Cons x xs) = x : non_empty_to_list xs
 non_empty_to_list (Last x)    = [x]
@@ -314,6 +351,7 @@ list_to_non_empty [x]          = Last x
 
 
 
+-- Type the top-level file AST
 type_file :: Fichier Position -> Env TFichier
 type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
     if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
@@ -329,6 +367,7 @@ type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
 
 
 
+-- Type the string naming a type
 type_type :: Type Position -> Env Typed
 type_type (NoAccess (Ident nm,p)) = type_lookup Nothing nm p
 type_type (Access (Ident nm,p))   = do
@@ -337,7 +376,7 @@ type_type (Access (Ident nm,p))   = do
     return $ TAccess (l,nm)
 
 -- Check if type is declared and return it
--- Context can be specified
+-- Context level can be specified
 type_get :: Maybe Integer -> String -> Position -> Env Recorded
 type_get mc nm p = do
     b <- is_declared nm
@@ -348,7 +387,7 @@ type_get mc nm p = do
     merror p ("type " ++ nm ++ " not declared/shadowed") mt
 
 -- lookup type recursively over aliases
--- Context can be specified
+-- Context level can be specified
 type_lookup :: Maybe Integer -> String -> Position -> Env Typed
 type_lookup mc nm p = do
     t <- type_get mc nm p
@@ -363,6 +402,8 @@ type_lookup mc nm p = do
         RNType t     -> return t
 
 
+-- Type a list of declarations, adding them to the environment, and
+-- storing them in a TDecls structure
 type_decls :: [Ann Decl Position] -> Position -> Env TDecls
 type_decls dcls p = do
     r <- CM.foldM (flip td) empty_tdecls dcls
@@ -508,6 +549,7 @@ type_decls dcls p = do
 
 
 
+-- Type the members of a new record
 type_champs :: NonEmptyList (Ann Champs Position)
             -> Env (Map String Typed)
 type_champs nl = CM.foldM add_if M.empty l
@@ -519,6 +561,7 @@ type_champs nl = CM.foldM add_if M.empty l
            else type_type t >>= (\e -> return $ M.insert k e mp)
 
 
+-- Type the list of parameters of a function/procedure
 type_params :: Ann Params Position -> Env [(String,CType,Position)]
 type_params (Params prs,pos) = do
     nprs <- mapM tpr mprs
@@ -547,6 +590,7 @@ type_params (Params prs,pos) = do
 
 
 
+-- Type an expression
 type_expr :: Ann Expr Position -> Env TPExpr
 type_expr (EInt i,_)  = return (TEInt i,  CType TInteger   False True)
 type_expr (EChar c,_) = return (TEChar c, CType TCharacter False True)
@@ -619,6 +663,7 @@ type_expr (ECall (Ident f,pf) params, pc) = do
           tprs <- CM.mapM cmppr $ zip cprs prs
           return (TECall f $ list_to_non_empty tprs, CType tp False True)
 
+-- Check if an expression has the expected type
 cmppr :: (Ann Expr Position, (String,CType)) -> Env TPExpr
 cmppr (e@(_,pe),(s,CType t o i)) = do
     ne@(_,(CType te b1 b2)) <- type_expr e
@@ -631,6 +676,7 @@ cmppr (e@(_,pe),(s,CType t o i)) = do
 
 
 
+-- Type an acces (TODO type_access -> type_acces)
 type_access :: Acces Position -> Env (TAccess,CType)
 type_access (AccesIdent (Ident s,p)) = do
     v <- getVar s
@@ -661,9 +707,12 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
 
 
 
+-- Type an instruction
 type_instr :: Ann Instr Position -> Env TInstr
 type_instr = type_instr_g Nothing
 
+-- Type an instruction, which can either have no type or an expected
+-- one (used when typing returns)
 type_instr_g :: Maybe Typed -> Ann Instr Position -> Env TInstr
 type_instr_g _ (IAssign (a, pa) e@(_, pe), pia) = do
     ne@(_, CType te _ b) <- type_expr e
@@ -750,6 +799,9 @@ type_instr_g t (IWhile e@(_, pe) instrs, pw) = do
     li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     return $ TIWhile ne $ list_to_non_empty li
 
+-- Type an instruction list, with a return type expected (the instruction list of a function)
+-- Will fail if control can reach the end of the list of instructions without encountering
+-- returns
 type_instr_typed :: Typed -> NonEmptyList (Ann Instr Position) -> Env (NonEmptyList TInstr)
 type_instr_typed t l = do
     (r,m) <- type_ityped t l
@@ -757,6 +809,8 @@ type_instr_typed t l = do
      Nothing -> return r
      Just p  -> lerror p "control reach end of function"
 
+-- Same as above, but instead of raising an instruction on failure will
+-- return the posistion of the failure.
 -- Will remove unreachable instructions, but still type them
 type_ityped :: Typed -> NonEmptyList (Ann Instr Position)
             -> Env (NonEmptyList TInstr, Maybe Position)
