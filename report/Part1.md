@@ -70,3 +70,31 @@ modifications.
 Le typage a ensuite été relativement simple à faire, la structure du
 programme collant de près à la structure de l'AST du parseur.
 
+Fonctionnalités
+==============
+
+Toutes les fonctionnalités de miniAda sont supportées.
+
+Quelques ajouts ont étés fait. Tout d'abord, en plus de la syntaxe `type T is access ...`
+et `type T is record ...`, la syntaxe `type T is new ...` est supportée pour definir un
+alias de type. Il est bon de noter que contrairement à Ada, où la compatibilité entre types
+est déterminée par leurs noms, ici les alias donnent des types mutuellement compatibles.
+
+Basé sur cette fonctionnalité, les types de base, ie `integer`, `boolean` et `character`
+sont définis comme des alias, et ne sont pas des mots clés réservés. Il est donc possible
+de les masquer (c'est aussi le cas pour `put` et `new_line`).
+
+De plus, il est possible de définir des access sur n'importe quel type. À noter que la
+syntaxe `access access` est cependant interdite, mais `type T is access R; v : access T;`
+ne l'est pas. Afin de rendre cette fonctionnalité intéressante, le `.all` (l'équivalent
+de l'indirection de pointeur) est supporté. Il est donc impossible de déclarer un record
+avec un membre appelé `all`.
+
+Dans une fonction, le compilateur va refuser si toutes les branches de controle ne
+terminent pas par un `return`, meme si certaines d'entre elles sont logiquement
+inatégnables, puisqu'il n'existe pas de moyen simple de le vérifier dans le cas
+général. De plus, il supprime le code inatégnable, mais le type quand meme : des
+instructions inatégnables ne seront pas présentes dans l'exécutable, mais leur
+correction est quand meme vérifiée. Le compilateur n'affiche pas de warning
+quand il détecte du code mort.
+
