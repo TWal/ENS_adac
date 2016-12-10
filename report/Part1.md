@@ -47,4 +47,26 @@ Où `a` est un type de l'arbre et `b` est une annotation.
 Typeur
 =====
 
-TODO
+Pour le typeur, la principale difficulté a été de bien définir les
+structures utilisées. Après quelques expérimentation, on utilise
+coome contexte une structure qui contient une map pour les fonctions,
+une pour les variables, et une pour les nouveux types. Une quatrième
+map a été ajoutée pour indiquer que des identifieurs ont étés réservés,
+et qu'ils ne peuvent pas désigner de types.
+
+Afin de gérer le masquage, l'environnement est une pile de contextes.
+
+Afin de gérer les mises à jour de l'environnement en Haskell, toutes
+les fonctions de typage sont encapsulée dans un monad `StateT`, ce
+qui permet en plus, en l'inscrivant sur un monad `Either String`, de
+lancer des exeptions sous la forme de texte, pour gérer les erreurs.
+
+Le format de l'environnement n'étant pas évident à manipuler correctement,
+on a implémenté des fonctions utilitaires d'abord.
+
+Créer l'AST typé s'est fait en reprenant l'AST du parseur avec peu de 
+modifications.
+
+Le typage a ensuite été relativement simple à faire, la structure du
+programme collant de près à la structure de l'AST du parseur.
+
