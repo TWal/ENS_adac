@@ -15,10 +15,10 @@ data DeclSizes = DeclSizes
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
-getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral level) ! name
+getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral (level-1)) ! name
 
 getOffset :: [(TDecls, DeclSizes)] -> TId -> Integer
-getOffset decls (level, name) = voffs (snd $ decls !! fromIntegral level) ! name
+getOffset decls (level, name) = voffs (snd $ decls !! fromIntegral (level-1)) ! name
 
 -- Generic function to avoid copy past
 getTypedSize' :: Typed -> (Integer -> a) -> (TId -> a) -> a
@@ -30,6 +30,11 @@ getTypedSize' t f g =
         TRecord i -> g i
         TAccess _ -> f 8
         TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+
+isRecOrAccess :: CType -> Bool
+isRecOrAccess (CType (TAccess _) _ _) = True
+isRecOrAccess (CType (TRecord _) _ _) = True
+isRecOrAccess _ = False
 
 mkDeclSizes :: [(TDecls, DeclSizes)] -> TDecls -> DeclSizes
 mkDeclSizes prev decls = DeclSizes
@@ -109,43 +114,47 @@ genFunction prev decl instrs = do
     decls = prev ++ [(decl, mkDeclSizes prev decl)]
 
     typedSize :: Typed -> Integer
-    typedSize t = getTypedSize' t id (getSize prev)
+    typedSize t = getTypedSize' t id (getSize decls)
 
-    getOffsets :: Bool -> Map String Typed -> Map String Integer
-    getOffsets isStack vars = M.fromList $ zip (map fst varsList) sizes
+    getOffsets :: Map String Typed -> Map String Integer
+    getOffsets vars = M.fromList $ zip (map fst varsList) sizes
       where
         varsList = M.toList vars
-        sizes = tail . scanl isStack (+) 0 . map ((\(CType t _ _) -> typedSize t) . fst . snd) $ varsList
+        sizes = scanl (+) 0 . map (typedSize . snd) $ varsList
 
-    computeAccessAddr :: TAccess -> Asm ()
-    computeAccessAddr (AccessFull str) = do
+    genAccess :: TAccess -> Asm ()
+    genAccess (AccessFull str) = do
         --let off = foldr (+) 0 . map (\(CType t _ _) -> typedSize t) .  map (fst . snd) . takeWhile (\(s,_) -> s /= str) $ M.toList (dvars decls)
         --TODO: get in the last "env", but AccessFull should contain a TId, not a String
-        let off = getOffset decls (fromIntegral $ length decls - 1, str)
+        let off = getOffset decls (fromIntegral $ length decls, str)
         leaq (Pointer rbp (-off)) rax
 
-    computeAccessAddr (AccessPart e str) = do
-        genExpr $ snd e
-        case fst e of
-            TAccess i -> error "TODO"
-            TRecord i -> error "TODO"
+    genAccess (AccessPart e str) = do
+        genExpr e
+        case snd e of
+            CType (TAccess i) _ _ -> error "TODO"
+            CType (TRecord (level, name)) _ _ ->
+                let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
+                let ofs = getOffsets rec in
+                leaq (Pointer rax (ofs ! str)) rax
             _ -> error "MEH."
 
     genInstr :: TInstr -> Asm ()
 
     genInstr (TIAssign acc e) = do
-        genExpr $ fst e
+        genExpr e
         pushq rax
-        computeAccessAddr acc
+        genAccess acc
         popq rbx
         movq rbx (Pointer rax 0)
 
-    genInstr (TIIdent s) = error "TODO"
+    genInstr (TIIdent s) = do
+        call (Label s)
 
     --Used to call print_int but it shall be
     --really implemented later
     genInstr (TICall s (Last e)) = do
-        genExpr . fst $ e
+        genExpr e
         movq rax rdi
         call (Label s)
 
@@ -159,7 +168,7 @@ genFunction prev decl instrs = do
         endLabel <- getLabel
         forM_ lci (\(cond, instrs) -> do
             nextLabel <- getLabel
-            genExpr . fst $ cond
+            genExpr cond
             testq rax rax
             jz nextLabel
             mapM_ genInstr instrs
@@ -169,7 +178,26 @@ genFunction prev decl instrs = do
         forM_ eci (mapM_ genInstr)
         label endLabel
 
-    genInstr (TIFor id rev from to instr) = error "TODO"
+    genInstr (TIFor id rev from to instrs) = do
+        unless rev $ genExpr to ; pushq rax
+        genExpr from ; pushq rax
+        when rev $ genExpr to ; pushq rax
+        bodyLabel <- getLabel
+        condLabel <- getLabel
+        jmp bodyLabel
+        label bodyLabel
+        pushq rax
+        pushq rbx
+        mapM_ genInstr instrs
+        label condLabel
+        popq rax -- counter
+        popq rbx -- to
+        cmpq rax rbx
+        when rev $ decq rax
+        unless rev $ incq rax
+        unless rev $ jle bodyLabel
+        when rev $ jge bodyLabel
+
 
     genInstr (TIWhile cond instrs) = do
         bodyLabel <- getLabel
@@ -178,29 +206,30 @@ genFunction prev decl instrs = do
         label bodyLabel
         mapM_ genInstr instrs
         label condLabel
-        genExpr . fst $ cond
+        genExpr cond
         testq rax rax
         jnz bodyLabel
 
 
-    genExpr :: TExpr -> Asm ()
+    genExpr :: TPExpr -> Asm ()
 
-    genExpr (TEInt i) = do
+    genExpr (TEInt i, _) = do
         movq i rax
 
-    genExpr (TEChar c) = do
+    genExpr (TEChar c, _) = do
         movq (int . ord $ c) rax
 
-    genExpr (TEBool b) = do
+    genExpr (TEBool b, _) = do
         movq (int $ (if b then 1 else 0)) rax
 
-    genExpr TENull = do
+    genExpr (TENull, _) = do
         movq (int 0) rax
 
-    genExpr (TEAccess a) = do
+    genExpr (TEAccess a, t) = do
         genAccess a
+        unless (isRecOrAccess t) $ movq (Pointer rax 0) rax
 
-    genExpr (TEBinop op e1 e2) =
+    genExpr (TEBinop op e1 e2, _) =
         case op of
             Equal -> evalCond sete
             NotEqual -> evalCond setne
@@ -237,9 +266,9 @@ genFunction prev decl instrs = do
         where
         evalBothExpr :: Asm ()
         evalBothExpr = do
-            genExpr . fst $ e2
+            genExpr e2
             pushq rax
-            genExpr . fst $ e1
+            genExpr e1
             popq rbx
         evalCond :: (Register -> Asm ()) -> Asm ()
         evalCond setcond = do
@@ -248,22 +277,17 @@ genFunction prev decl instrs = do
             setcond al
             andq (int 1) rax
 
-    genExpr (TEUnop op e) = do
-        genExpr .fst $ e
+    genExpr (TEUnop op e, _) = do
+        genExpr e
         case op of
             Not -> do
                 xorq (int 1) rax
             Negate -> do
                 negq rax
 
-    genExpr (TENew s) = error "Not implemented"
+    genExpr (TENew s, _) = error "Not implemented"
 
-    genExpr (TECall s exprList) = error "Not implemented"
+    genExpr (TECall s exprList, _) = error "Not implemented"
 
-    genExpr (TECharval e) = do
-        genExpr . fst $ e
-
-    genAccess :: TAccess -> Asm ()
-    genAccess ac = do
-        computeAccessAddr ac
-        movq (Pointer rax 0) rax
+    genExpr (TECharval e, _) = do
+        genExpr e

@@ -88,6 +88,11 @@ endSource =
     "mov $0, %rax\n" ++
     "call printf\n" ++
     "ret\n" ++
+    "put:\n" ++
+    "jmp putchar\n" ++
+    "new_line:\n" ++
+    "movq $10, %rdi\n" ++
+    "jmp putchar\n" ++
     ".data\n" ++
     "message:.string \"%d\\n\"\n"
 
