@@ -336,13 +336,9 @@ merror p s (Just x) = return x
 fromI :: Ident b -> String
 fromI (Ident s) = s
 
--- TODO : maybe irrelevant if we make NonEmptyList an instance
--- of Foldable ?
-
 -- Convert a NonEmptyList to the associated list
 non_empty_to_list :: NonEmptyList a -> [a]
-non_empty_to_list (Cons x xs) = x : non_empty_to_list xs
-non_empty_to_list (Last x)    = [x]
+non_empty_to_list = foldr (:) []
 
 -- Must not be called on empty list
 list_to_non_empty :: [a] -> NonEmptyList a
@@ -354,16 +350,12 @@ list_to_non_empty [x]          = Last x
 -- Type the top-level file AST
 type_file :: Fichier Position -> Env TFichier
 type_file (Fichier (Ident name, pos) decls instrs mnm2) = do
-    if not b then lerror (snd $ fromJust mnm2) $ " : procedure "
-                      ++ name ++ " is renamed " ++ (fromI $ fst $ fromJust mnm2)
-             else return ()
     addFun name pos $ TProcedure $ TParams []
     push_env
     tdcls  <- type_decls decls pos
     tistrs <- CM.mapM type_instr $ non_empty_to_list instrs
     pop_env
     return $ TFichier name tdcls $ list_to_non_empty tistrs
- where b = isNothing mnm2 || (name == (fromI $ fst $ fromJust mnm2))
 
 
 
