@@ -133,6 +133,11 @@ contextOf :: String -> Env (Maybe Integer)
 contextOf s = do
     e <- S.get
     return $ _contextOf s $ fmap (extract types) e
+-- Same as above but for the variables
+contextOfV :: String -> Env (Maybe Integer)
+contextOfV s = do
+    e <- S.get
+    return $ _contextOf s $ fmap (extract variables) e
 
 
 -- Try to find an identifier in a given context
@@ -310,7 +315,7 @@ data TExpr =
   | TENew String
   | TECall String [TPExpr]
   | TECharval TPExpr
-data TAccess = AccessFull String | AccessPart TPExpr String
+data TAccess = AccessFull TId | AccessPart TPExpr String
 data TInstr =
     TIAssign TAccess TPExpr
   | TIIdent String
@@ -681,7 +686,8 @@ type_access (AccesIdent (Ident s,p)) = do
                                 ++ "parameters, 0 given"
                     Just (TFunction (TParams []) t) ->
                         return (TECall s [], CType t False True)
-     Just t  -> return (TEAccess $ AccessFull s, t)
+     Just t  -> do (Just l) <- contextOfV s
+                   return (TEAccess $ AccessFull (l,s), t)
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
