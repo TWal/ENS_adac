@@ -1,4 +1,5 @@
-module Typer ( Typed       (..)
+module Typer ( TId         (..)
+             , Typed       (..)
              , Functionnal (..)
              , TParams     (..)
              , Recorded    (..)
