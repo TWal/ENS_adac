@@ -123,10 +123,9 @@ genFunction prev decl instrs = do
         sizes = scanl (+) 0 . map (typedSize . snd) $ varsList
 
     genAccess :: TAccess -> Asm ()
-    genAccess (AccessFull str) = do
+    genAccess (AccessFull id) = do
         --let off = foldr (+) 0 . map (\(CType t _ _) -> typedSize t) .  map (fst . snd) . takeWhile (\(s,_) -> s /= str) $ M.toList (dvars decls)
-        --TODO: get in the last "env", but AccessFull should contain a TId, not a String
-        let off = getOffset decls (fromIntegral $ length decls, str)
+        let off = getOffset decls id
         leaq (Pointer rbp (-off)) rax
 
     genAccess (AccessPart e str) = do
