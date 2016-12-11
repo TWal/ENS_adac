@@ -295,8 +295,8 @@ pop_env = do
 data TFichier = TFichier String TDecls (NonEmptyList TInstr)
 data TDecls = TDecls
     { dtypes :: Map String Recorded
-    , dfuns  :: Map String (Functionnal,NonEmptyList TInstr)
-    , dvars  :: Map String (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
+    , dfuns  :: Map String (Functionnal,TDecls,NonEmptyList TInstr)
+    , dvars  :: Map String (CType,Maybe TPExpr)
     }
 type TPExpr = (TExpr,CType)
 data TExpr =
@@ -308,7 +308,7 @@ data TExpr =
   | TEBinop (Binop ()) TPExpr TPExpr
   | TEUnop (Unop ()) TPExpr
   | TENew String
-  | TECall String (NonEmptyList TPExpr)
+  | TECall String [TPExpr]
   | TECharval TPExpr
 data TAccess = AccessFull String | AccessPart TPExpr String
 data TInstr =
@@ -450,7 +450,7 @@ type_decls dcls p = do
             (_, CType t2 _ _)              -> if t == t2 then return ()
                 else lerror pe $ show t2 ++ " is not compatible with " ++ show t
            CM.foldM (\mp -> \(Ident i,p) -> addv_if mp p i
-               $ (CType t True True,Just $ Left ne)) tds lids
+               $ (CType t True True,Just ne)) tds lids
        td (DAssign ids (tp, ptp) Nothing, pa) tds = do
            let lids = non_empty_to_list ids
            CM.mapM_ (declare . \(Ident s,_) -> s) lids
@@ -471,11 +471,12 @@ type_decls dcls p = do
            push_env
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
                                                      -- the environment
-           type_decls dcls ppr
+           ntds <- type_decls dcls ppr
            li <- CM.mapM type_instr $ non_empty_to_list instrs
            pop_env
            addf_if tds ppr nm
-                   (TProcedure $ TParams $ map drop3 params, list_to_non_empty li)
+                   (TProcedure $ TParams $ map drop3 params, ntds, 
+                        list_to_non_empty li)
        td (DFunction (Ident nm, pnm) (Just prs) (rtp, ptp) dcls instrs mnm, pf) tds = do
            check_declared pf
            let nm2 = case mnm of
@@ -488,11 +489,11 @@ type_decls dcls p = do
            addFun nm pf $ TFunction (TParams $ map drop3 params) t -- Adding the function
            push_env
            CM.forM params $ \(s,t,p) -> addVar s p t -- Adding the parameters to
-           type_decls dcls pf
+           ntds <- type_decls dcls pf
            li <- type_instr_typed t instrs
            pop_env
            addf_if tds pf nm
-                   (TFunction (TParams $ map drop3 params) t, li)
+                   (TFunction (TParams $ map drop3 params) t, ntds, li)
        td (DFunction (Ident nm, pnm) Nothing (rtp, ptp) dcls instrs mnm, pf) tds = do
            check_declared pf
            let nm2 = case mnm of
@@ -501,15 +502,13 @@ type_decls dcls p = do
            if (fst nm2) /= nm then lerror (snd nm2) $ (fst nm2) ++ " is not " ++ nm
                               else return ()
            t <- type_type rtp
+           addFun nm pf $ TFunction (TParams []) t -- Adding the function
            push_env
-           addVar nm pf $ CType t False True-- Adding the function
-           push_env
-           type_decls dcls pf
+           ntds <- type_decls dcls pf
            li <- type_instr_typed t instrs
            pop_env
-           pop_env
-           addv_if tds pf nm
-               (CType t False True, Just $ Right li)
+           addf_if tds pf nm
+               (TFunction (TParams []) t, ntds, li)
 
        check_declared :: Position -> Env ()
        check_declared p = do
@@ -532,7 +531,7 @@ type_decls dcls p = do
                                  addTpe k p e
                                  return $ tds { dtypes = M.insert k e (dtypes tds) }
        addv_if :: TDecls -> Position -> String
-               -> (CType,Maybe (Either TPExpr (NonEmptyList TInstr)))
+               -> (CType,Maybe TPExpr)
                -> Env TDecls
        addv_if tds p k e = if M.member k (dvars tds)
                            then lerror p $ k ++ " is already declared"
@@ -540,7 +539,7 @@ type_decls dcls p = do
                                  addVar k p (fst e)
                                  return $ tds { dvars = M.insert k e (dvars tds) }
        addf_if :: TDecls -> Position -> String
-               -> (Functionnal,NonEmptyList TInstr) -> Env TDecls
+               -> (Functionnal,TDecls,NonEmptyList TInstr) -> Env TDecls
        addf_if tds p k e = if M.member k (dfuns tds)
                            then lerror p $ k ++ " is already declared"
                            else do
@@ -596,7 +595,7 @@ type_expr (EInt i,_)  = return (TEInt i,  CType TInteger   False True)
 type_expr (EChar c,_) = return (TEChar c, CType TCharacter False True)
 type_expr (EBool b,_) = return (TEBool b, CType TBoolean   False True)
 type_expr (ENull, _)  = return (TENull,   CType TypeNull   False True)
-type_expr (EAcces (a,pa),_) = type_access a >>= \(ta,t) -> return (TEAccess ta,t)
+type_expr (EAcces (a,pa),_) = type_access a
 type_expr (EBinop (b,pb) e1@(_,pe1) e2@(_,pe2), peb) = do
     ne1@(_,cte1@(CType te1 _ b1)) <- type_expr e1
     ne2@(_,cte2@(CType te2 _ b2)) <- type_expr e2
@@ -661,7 +660,7 @@ type_expr (ECall (Ident f,pf) params, pc) = do
           else lerror pc $ "function " ++ f ++ " expects " ++ show (length prs)
                         ++ " arguments, " ++ show (length cprs) ++ " given"
           tprs <- CM.mapM cmppr $ zip cprs prs
-          return (TECall f $ list_to_non_empty tprs, CType tp False True)
+          return (TECall f tprs, CType tp False True)
 
 -- Check if an expression has the expected type
 cmppr :: (Ann Expr Position, (String,CType)) -> Env TPExpr
@@ -677,12 +676,20 @@ cmppr (e@(_,pe),(s,CType t o i)) = do
 
 
 -- Type an acces (TODO type_access -> type_acces)
-type_access :: Acces Position -> Env (TAccess,CType)
+type_access :: Acces Position -> Env TPExpr
 type_access (AccesIdent (Ident s,p)) = do
     v <- getVar s
     case v of
-     Nothing -> lerror p $ s ++ " is not defined"
-     Just t  -> return (AccessFull s, t)
+     Nothing -> do f <- getFun s
+                   case f of
+                    Nothing -> lerror p $ s ++ " is not defined"
+                    Just (TProcedure _) -> lerror p $ s ++ " is a procedure"
+                    Just (TFunction (TParams l@(_:_)) _) ->
+                        lerror p $ s ++ "expected " ++ show (length l)
+                                ++ "parameters, 0 given"
+                    Just (TFunction (TParams []) t) ->
+                        return (TECall s [], CType t False True)
+     Just t  -> return (TEAccess $ AccessFull s, t)
 type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
     te@(_,tpe) <- type_expr ie
     rtp <- case tpe of
@@ -691,7 +698,7 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
                                      else get_sub (l,n) pe f pf     >>= \x -> return $ CType x True b2
      CType (TRecord s)     b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
      _                       -> lerror pe $ "expression does not evaluate to a record"
-    return (AccessPart te f, rtp)
+    return (TEAccess $ AccessPart te f, rtp)
  where get_sub :: TId -> Position -> String -> Position -> Env Typed
        get_sub (c,s) ps f pf = do
         t <- getTpeC c s
@@ -717,8 +724,9 @@ type_instr_g :: Maybe Typed -> Ann Instr Position -> Env TInstr
 type_instr_g _ (IAssign (a, pa) e@(_, pe), pia) = do
     ne@(_, CType te _ b) <- type_expr e
     if not b then lerror pe $ "expecting a rvalue" else return ()
-    (na,CType ta b2 _) <- type_access a
+    (ea,CType ta b2 _) <- type_access a
     if not b2 then lerror pa $ "expecting a lvalue" else return ()
+    let (TEAccess na) = ea
     if is_access ta && te == TypeNull then return $ TIAssign na ne
     else if ta == te then return $ TIAssign na ne
     else lerror pia $ "cannot assign a " ++ show te ++ " to a " ++ show ta
