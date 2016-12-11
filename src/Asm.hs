@@ -30,7 +30,8 @@ data Register =
 
 data Label = Label String
 
-data Memory = Memory Register Integer Integer Integer
+data Memory = Pointer Register Integer --base, offset
+            | PointerArray Register Register Integer Integer -- base, index, scale, offset
 
 data Star a = Star a
 
@@ -49,7 +50,8 @@ instance RValue Register where
               [] -> "%" -- shouldn't happen
 
 instance RValue Memory where
-    arg (Memory base index scale offset) = (show offset) ++ "(" ++ (arg base) ++ ", " ++ (show index) ++ ", " ++ (show scale) ++ ")"
+    arg (Pointer base offset) = (show offset) ++ "(" ++ (arg base) ++ ")"
+    arg (PointerArray base index scale offset) = (show offset) ++ "(" ++ (arg base) ++ ", " ++ (show index) ++ ", " ++ (show scale) ++ ")"
 
 class (RValue a) => LValue a
 instance LValue Register
