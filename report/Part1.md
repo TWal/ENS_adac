@@ -49,7 +49,7 @@ Typeur
 
 Pour le typeur, la principale difficulté a été de bien définir les
 structures utilisées. Après quelques expérimentation, on utilise
-coome contexte une structure qui contient une map pour les fonctions,
+comme contexte une structure qui contient une map pour les fonctions,
 une pour les variables, et une pour les nouveux types. Une quatrième
 map a été ajoutée pour indiquer que des identifieurs ont étés réservés,
 et qu'ils ne peuvent pas désigner de types.
@@ -64,7 +64,7 @@ lancer des exeptions sous la forme de texte, pour gérer les erreurs.
 Le format de l'environnement n'étant pas évident à manipuler correctement,
 on a implémenté des fonctions utilitaires d'abord.
 
-Créer l'AST typé s'est fait en reprenant l'AST du parseur avec peu de 
+Créer l'AST typé s'est fait en reprenant l'AST du parseur avec peu de
 modifications.
 
 Le typage a ensuite été relativement simple à faire, la structure du
