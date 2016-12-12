@@ -83,12 +83,13 @@ beginSource =
 endSource :: String
 endSource =
     "print_int:\n" ++
-    "mov %rdi, %rsi\n" ++
+    "mov 16(%rsp), %rsi\n" ++
     "mov $message, %rdi\n" ++
     "mov $0, %rax\n" ++
     "call printf\n" ++
     "ret\n" ++
     "put:\n" ++
+    "movq 16(%rsp), %rdi\n" ++
     "jmp putchar\n" ++
     "new_line:\n" ++
     "movq $10, %rdi\n" ++

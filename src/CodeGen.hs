@@ -12,6 +12,7 @@ data DeclSizes = DeclSizes
     { tsizes :: Map String Integer
     , voffs  :: Map String Integer
     , frameSize :: Integer
+    , argsSize :: Integer
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -36,11 +37,16 @@ isRecOrAccess (CType (TAccess _) _ _) = True
 isRecOrAccess (CType (TRecord _) _ _) = True
 isRecOrAccess _ = False
 
-mkDeclSizes :: [(TDecls, DeclSizes)] -> TDecls -> DeclSizes
-mkDeclSizes prev decls = DeclSizes
+getParams :: Functionnal -> [(String, CType)]
+getParams (TFunction (TParams p) _) = p
+getParams (TProcedure (TParams p)) = p
+
+mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> TDecls -> DeclSizes
+mkDeclSizes prev func decls = DeclSizes
     { tsizes = recordedSize
-    , voffs = fst varOffsets
-    , frameSize = snd varOffsets
+    , voffs = (\(x,_,_) -> x)  offsets
+    , frameSize = (\(_,x,_) -> x) offsets
+    , argsSize = (\(_,_,x) -> x) offsets
     }
   where
     addMemo :: String -> Integer -> State (Map String Integer) ()
@@ -84,20 +90,32 @@ mkDeclSizes prev decls = DeclSizes
         if fromIntegral level < length prev then getSize prev (level, name)
         else recordedSize ! name)
 
-    varOffsets :: (Map String Integer, Integer)
-    varOffsets = (M.fromList $ zip (map fst varsList) (tail sizes), last sizes)
+    compOffsets :: [(String, CType)] -> ([(String, Integer)], Integer)
+    compOffsets list = (zip (map fst list) (tail sizes), last sizes)
+      where sizes = scanl (+) 0 . map ((\(CType t _ _) -> typedSize t) . snd) $ list
+
+    offsets :: (Map String Integer, Integer, Integer)
+    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-8-8-8)) . fst $ argsOffs), snd varOffs, snd argsOffs)
       where
-        varsList = M.toList (dvars decls)
-        sizes :: [Integer]
-        sizes = scanl (+) 0 . map ((\(CType t _ _) -> typedSize t) . fst . snd) $ varsList
+        varOffs = compOffsets . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
+        argsOffs = compOffsets . getParams $ func
 
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
-    genFunction [] decl instrs
+    genFunction [] (TProcedure (TParams [])) decl instrs
 
-genFunction :: [(TDecls, DeclSizes)] -> TDecls -> NonEmptyList TInstr -> Asm ()
-genFunction prev decl instrs = do
+-- Stack when a function is called;
+-- some space to give the return value
+-- argument n
+-- ...
+-- argument 1
+-- %rbp father
+-- return address
+-- %rbp of caller
+-- local variables...
+genFunction :: [(TDecls, DeclSizes)] -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
+genFunction prev func decl instrs = do
     pushq rbp
     movq rsp rbp
     subq fs rsp
@@ -111,7 +129,7 @@ genFunction prev decl instrs = do
 
     fs = frameSize . snd . last $ decls
     decls :: [(TDecls, DeclSizes)]
-    decls = prev ++ [(decl, mkDeclSizes prev decl)]
+    decls = prev ++ [(decl, mkDeclSizes prev func decl)]
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (getSize decls)
@@ -154,8 +172,11 @@ genFunction prev decl instrs = do
     --really implemented later
     genInstr (TICall s (Last e)) = do
         genExpr e
-        movq rax rdi
+        pushq rax
+        pushq rax --TODO: rbp father
         call (Label s)
+        popq rax
+        popq rax
 
     genInstr (TIReturn e) = error "TODO"
 
@@ -177,25 +198,7 @@ genFunction prev decl instrs = do
         forM_ eci (mapM_ genInstr)
         label endLabel
 
-    genInstr (TIFor id rev from to instrs) = do
-        unless rev $ genExpr to ; pushq rax
-        genExpr from ; pushq rax
-        when rev $ genExpr to ; pushq rax
-        bodyLabel <- getLabel
-        condLabel <- getLabel
-        jmp bodyLabel
-        label bodyLabel
-        pushq rax
-        pushq rbx
-        mapM_ genInstr instrs
-        label condLabel
-        popq rax -- counter
-        popq rbx -- to
-        cmpq rax rbx
-        when rev $ decq rax
-        unless rev $ incq rax
-        unless rev $ jle bodyLabel
-        when rev $ jge bodyLabel
+    genInstr (TIFor id rev from to instrs) = error "TODO"
 
 
     genInstr (TIWhile cond instrs) = do
