@@ -77,8 +77,7 @@ getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
 beginSource :: String
 beginSource =
     ".text\n" ++
-    ".globl main\n" ++
-    "main:\n"
+    ".globl main\n"
 
 endSource :: String
 endSource =

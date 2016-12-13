@@ -41,6 +41,12 @@ getParams :: Functionnal -> [(String, CType)]
 getParams (TFunction (TParams p) _) = p
 getParams (TProcedure (TParams p)) = p
 
+reverse' :: (Foldable t) => t a -> [a]
+reverse' = foldl (flip (:)) []
+
+uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
+uncurry3 f (a, b, c) = f a b c
+
 mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> TDecls -> DeclSizes
 mkDeclSizes prev func decls = DeclSizes
     { tsizes = recordedSize
@@ -95,7 +101,7 @@ mkDeclSizes prev func decls = DeclSizes
       where sizes = scanl (+) 0 . map ((\(CType t _ _) -> typedSize t) . snd) $ list
 
     offsets :: (Map String Integer, Integer, Integer)
-    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-8-8-8)) . fst $ argsOffs), snd varOffs, snd argsOffs)
+    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-8-8)) . fst $ argsOffs), snd varOffs, snd argsOffs)
       where
         varOffs = compOffsets . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
         argsOffs = compOffsets . getParams $ func
@@ -103,7 +109,7 @@ mkDeclSizes prev func decls = DeclSizes
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
-    genFunction [] (TProcedure (TParams [])) decl instrs
+    genFunction [] "main" (TProcedure (TParams [])) decl instrs
 
 -- Stack when a function is called;
 -- some space to give the return value
@@ -114,16 +120,16 @@ genFichier (TFichier _ decl instrs) =
 -- return address
 -- %rbp of caller
 -- local variables...
-genFunction :: [(TDecls, DeclSizes)] -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
-genFunction prev func decl instrs = do
+genFunction :: [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
+genFunction prev name func decl instrs = do
+    label (Label name)
     pushq rbp
     movq rsp rbp
     subq fs rsp
     mapM_ genInstr instrs
     movq (int 0) rax
-    addq fs rsp
-    popq rbp
-    ret
+    genInstr (TIReturn Nothing)
+    mapM_ (\(s, f) -> uncurry3 (genFunction decls s) f) (M.toList $ dfuns decl)
 
   where
 
@@ -166,19 +172,31 @@ genFunction prev func decl instrs = do
         movq rbx (Pointer rax 0)
 
     genInstr (TIIdent s) = do
-        call (Label s)
-
-    --Used to call print_int but it shall be
-    --really implemented later
-    genInstr (TICall s (Last e)) = do
-        genExpr e
-        pushq rax
         pushq rax --TODO: rbp father
         call (Label s)
         popq rax
-        popq rax
 
-    genInstr (TIReturn e) = error "TODO"
+    genInstr (TICall s args) = do
+        forM_ (reverse' args) (\e -> do
+            genExpr e
+            pushq rax
+            )
+        pushq rax --TODO: rbp father
+        call (Label s)
+        popq rax
+        forM_ (reverse' args) (\e -> do
+            popq rax
+            )
+
+    genInstr (TIReturn Nothing) = do
+        addq fs rsp
+        popq rbp
+        ret
+
+    genInstr (TIReturn (Just e)) = do
+        genExpr e
+        movq rax (Pointer rbp ((+24) . argsSize . snd . last $ decls))
+        genInstr (TIReturn Nothing)
 
     -- It's useful only for the typer to shadow names
     genInstr (TIBegin le) = do
@@ -289,7 +307,19 @@ genFunction prev func decl instrs = do
 
     genExpr (TENew s, _) = error "Not implemented"
 
-    genExpr (TECall s exprList, _) = error "Not implemented"
+    genExpr (TECall s args, _) = do
+        pushq rax -- args
+        forM_ (reverse' args) (\e -> do
+            genExpr e
+            pushq rax
+            )
+        pushq rax --TODO: rbp father
+        call (Label s)
+        popq rax
+        forM_ (reverse' args) (\e -> do
+            popq rax
+            )
+        popq rax -- args
 
     genExpr (TECharval e, _) = do
         genExpr e
