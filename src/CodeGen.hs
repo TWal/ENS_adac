@@ -7,12 +7,15 @@ import Control.Monad
 import Control.Monad.State
 import           Data.Map      (Map, (!))
 import qualified Data.Map      as M
+import Data.List (elemIndex)
+import Data.Maybe (maybe)
 
 data DeclSizes = DeclSizes
     { tsizes :: Map String Integer
     , voffs  :: Map String Integer
     , frameSize :: Integer
     , argsSize :: Integer
+    , fctName :: String
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -47,12 +50,13 @@ reverse' = foldl (flip (:)) []
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (a, b, c) = f a b c
 
-mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> TDecls -> DeclSizes
-mkDeclSizes prev func decls = DeclSizes
+mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> TDecls -> DeclSizes
+mkDeclSizes prev func funcname decls = DeclSizes
     { tsizes = recordedSize
     , voffs = (\(x,_,_) -> x)  offsets
     , frameSize = (\(_,x,_) -> x) offsets
     , argsSize = (\(_,_,x) -> x) offsets
+    , fctName = funcname
     }
   where
     addMemo :: String -> Integer -> State (Map String Integer) ()
@@ -135,7 +139,10 @@ genFunction prev name func decl instrs = do
 
     fs = frameSize . snd . last $ decls
     decls :: [(TDecls, DeclSizes)]
-    decls = prev ++ [(decl, mkDeclSizes prev func decl)]
+    decls = prev ++ [(decl, mkDeclSizes prev func name decl)]
+
+    getFctLevel :: String -> Maybe Int
+    getFctLevel = flip elemIndex (map (fctName . snd) decls)
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (getSize decls)
@@ -148,9 +155,10 @@ genFunction prev name func decl instrs = do
 
     genAccess :: TAccess -> Asm ()
     genAccess (AccessFull id) = do
-        --let off = foldr (+) 0 . map (\(CType t _ _) -> typedSize t) .  map (fst . snd) . takeWhile (\(s,_) -> s /= str) $ M.toList (dvars decls)
         let off = getOffset decls id
-        leaq (Pointer rbp (-off)) rax
+        movq rbp rax
+        replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
+        leaq (Pointer rax (-off)) rax
 
     genAccess (AccessPart e str) = do
         genExpr e
@@ -162,6 +170,21 @@ genFunction prev name func decl instrs = do
                 leaq (Pointer rax (ofs ! str)) rax
             _ -> error "MEH."
 
+    doFctCall :: String -> [TPExpr] -> Asm ()
+    doFctCall s args = do
+        forM_ (reverse' args) (\e -> do
+            genExpr e
+            pushq rax
+            )
+        movq rbp rax
+        unless (s `elem` ["print_int", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
+        pushq rax
+        call (Label s)
+        popq rax
+        forM_ (reverse' args) (\e -> do
+            popq rax
+            )
+
     genInstr :: TInstr -> Asm ()
 
     genInstr (TIAssign acc e) = do
@@ -172,21 +195,10 @@ genFunction prev name func decl instrs = do
         movq rbx (Pointer rax 0)
 
     genInstr (TIIdent s) = do
-        pushq rax --TODO: rbp father
-        call (Label s)
-        popq rax
+        doFctCall s []
 
     genInstr (TICall s args) = do
-        forM_ (reverse' args) (\e -> do
-            genExpr e
-            pushq rax
-            )
-        pushq rax --TODO: rbp father
-        call (Label s)
-        popq rax
-        forM_ (reverse' args) (\e -> do
-            popq rax
-            )
+        doFctCall s (foldr (:) [] args)
 
     genInstr (TIReturn Nothing) = do
         addq fs rsp
@@ -309,17 +321,10 @@ genFunction prev name func decl instrs = do
 
     genExpr (TECall s args, _) = do
         pushq rax -- args
-        forM_ (reverse' args) (\e -> do
-            genExpr e
-            pushq rax
-            )
-        pushq rax --TODO: rbp father
-        call (Label s)
+        doFctCall s args
         popq rax
-        forM_ (reverse' args) (\e -> do
-            popq rax
-            )
-        popq rax -- args
+
+
 
     genExpr (TECharval e, _) = do
         genExpr e
