@@ -144,6 +144,9 @@ genFunction prev name func decl instrs = do
     pushq rbp
     movq rsp rbp
     subq fs rsp
+    forM_ (M.toList $ dvars decl) (\(s, (_, e)) ->
+        maybe (return ()) (\e' -> genInstr (TIAssign (AccessFull (fromIntegral $ length decls, s)) e')) e
+        )
     mapM_ genInstr instrs
     movq (int 0) rax
     genInstr (TIReturn Nothing)
