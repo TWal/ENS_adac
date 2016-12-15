@@ -4,16 +4,20 @@ procedure Test is
     procedure Bla(foo : Integer) is
         bar : Integer;
     begin
-        Put(character'val(foo+a));
+        bar := 65;
         for I in 1 .. 10 loop
             Put(character'val(bar+I));
+            New_Line;
             for I in 1 .. 10 loop
-                Put(character'val(97+I));
+                Put(character'val(foo+I));
+                New_Line;
             end loop;
         end loop;
     end;
 begin
     for I in 1 .. 10 loop
         Put('A');
+        New_Line;
     end loop;
+    Bla(97);
 end;

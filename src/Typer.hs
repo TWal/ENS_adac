@@ -297,6 +297,12 @@ pop_env = do
     S.put $ ptail e
     return $ phead e
 
+getEnvNb :: Env (Integer)
+getEnvNb = do
+    e <- S.get
+    let (n,_) = phead e
+    return $ fromIntegral n
+
 -------------- Typed AST ------------------------------------------------------
 data TFichier = TFichier String TDecls (NonEmptyList TInstr)
 data TDecls = TDecls
@@ -325,7 +331,7 @@ data TInstr =
   | TIBegin (NonEmptyList TInstr)
   | TIIf (NonEmptyList (TPExpr, NonEmptyList TInstr))
          (Maybe (NonEmptyList TInstr))
-  | TIFor String Bool TPExpr TPExpr (NonEmptyList TInstr)
+  | TIFor TId Bool TPExpr TPExpr (NonEmptyList TInstr)
   | TIWhile TPExpr (NonEmptyList TInstr)
 
 -------------- Getting the typing done ----------------------------------------
@@ -797,7 +803,8 @@ type_instr_g t (IFor (Ident v,pv) b e1@(_,pe1) e2@(_,pe2) instrs, pif) = do
     addVar v pv $ CType TInteger False True
     li <- CM.mapM (type_instr_g t) $ non_empty_to_list instrs
     pop_env
-    return $ TIFor v b ne1 ne2 $ list_to_non_empty li
+    n <- getEnvNb
+    return $ TIFor (n+1, v) b ne1 ne2 $ list_to_non_empty li
 type_instr_g t (IWhile e@(_, pe) instrs, pw) = do
     ne@(_,CType te _ b) <- type_expr e
     if not b then lerror pe "expecting a rvalue"
@@ -948,6 +955,7 @@ type_program f = S.evalStateT (type_file f) (Bottom (0, e))
  where e = Context vars funs tps St.empty
        funs = M.fromList
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
+              , ("print_int", TProcedure $ TParams [("i", CType TInteger False True)])
               , ("new_line", TProcedure $ TParams [])
               ]
        tps  = M.fromList

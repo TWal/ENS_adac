@@ -16,6 +16,7 @@ data DeclSizes = DeclSizes
     , frameSize :: Integer
     , argsSize :: Integer
     , fctName :: String
+    , nbNestedFor :: Integer
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -50,13 +51,14 @@ reverse' = foldl (flip (:)) []
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (a, b, c) = f a b c
 
-mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> TDecls -> DeclSizes
-mkDeclSizes prev func funcname decls = DeclSizes
+mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> NonEmptyList TInstr -> TDecls -> DeclSizes
+mkDeclSizes prev func funcname instrs decls = DeclSizes
     { tsizes = recordedSize
     , voffs = (\(x,_,_) -> x)  offsets
-    , frameSize = (\(_,x,_) -> x) offsets
+    , frameSize = (\(_,x,_) -> x) offsets + 8*nbNestedFor
     , argsSize = (\(_,_,x) -> x) offsets
     , fctName = funcname
+    , nbNestedFor = nbNestedFor
     }
   where
     addMemo :: String -> Integer -> State (Map String Integer) ()
@@ -110,6 +112,18 @@ mkDeclSizes prev func funcname decls = DeclSizes
         varOffs = compOffsets . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
         argsOffs = compOffsets . getParams $ func
 
+    compNbNestedFor :: TInstr -> Integer
+    compNbNestedFor (TIAssign _ _) = 0
+    compNbNestedFor (TIIdent _) = 0
+    compNbNestedFor (TICall _ _) = 0
+    compNbNestedFor (TIReturn _) = 0
+    compNbNestedFor (TIBegin l) = foldr (max . compNbNestedFor) 0 l
+    compNbNestedFor (TIIf l m) = max (foldr (max . compNbNestedFor . TIBegin . snd) 0 l) (maybe 0 (compNbNestedFor . TIBegin) m)
+    compNbNestedFor (TIFor _ _ _ _ l) = 1 + compNbNestedFor (TIBegin l)
+    compNbNestedFor (TIWhile _ l) = compNbNestedFor (TIBegin l)
+
+    nbNestedFor = compNbNestedFor (TIBegin instrs)
+
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
@@ -139,7 +153,7 @@ genFunction prev name func decl instrs = do
 
     fs = frameSize . snd . last $ decls
     decls :: [(TDecls, DeclSizes)]
-    decls = prev ++ [(decl, mkDeclSizes prev func name decl)]
+    decls = prev ++ [(decl, mkDeclSizes prev func name instrs decl)]
 
     getFctLevel :: String -> Maybe Int
     getFctLevel = flip elemIndex (map (fctName . snd) decls)
@@ -154,11 +168,15 @@ genFunction prev name func decl instrs = do
         sizes = scanl (+) 0 . map (typedSize . snd) $ varsList
 
     genAccess :: TAccess -> Asm ()
-    genAccess (AccessFull id) = do
-        let off = getOffset decls id
-        movq rbp rax
-        replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
-        leaq (Pointer rax (-off)) rax
+    genAccess (AccessFull id) =
+        if fst id > (fromIntegral $ length decls) then do
+            let d = snd . last $ decls
+            leaq (Pointer rbp (-((frameSize d) - 8*(nbNestedFor d) + 8*(fst id - (fromIntegral $ length decls))))) rax
+        else do
+            let off = getOffset decls id
+            movq rbp rax
+            replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
+            leaq (Pointer rax (-off)) rax
 
     genAccess (AccessPart e str) = do
         genExpr e
@@ -228,7 +246,33 @@ genFunction prev name func decl instrs = do
         forM_ eci (mapM_ genInstr)
         label endLabel
 
-    genInstr (TIFor id rev from to instrs) = error "TODO"
+    genInstr (TIFor id rev from to instrs) = do
+        genExpr from
+        pushq rax
+        genAccess (AccessFull id)
+        popq rbx
+        movq rbx (Pointer rax 0)
+        genExpr to
+        pushq rax
+        bodyLabel <- getLabel
+        condLabel <- getLabel
+        jmp condLabel
+        label bodyLabel
+        mapM_ genInstr instrs
+        genAccess (AccessFull id)
+        movq (Pointer rax 0) rbx
+        if rev then decq rbx
+        else incq rbx
+        movq rbx (Pointer rax 0)
+        label condLabel
+        genAccess (AccessFull id)
+        movq (Pointer rax 0) rax
+        popq rbx
+        pushq rbx
+        cmpq rax rbx
+        if rev then jle bodyLabel
+        else jge bodyLabel
+        popq rbx
 
 
     genInstr (TIWhile cond instrs) = do
