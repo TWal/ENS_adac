@@ -21,62 +21,32 @@ $alpha = [a-zA-Z]
 tokens :-
     $white+                         ;
     "--".*                          ;
-    $digit+                         { tok_read TokenInt }
-    \' . \'                         { tok_char TokenChar }
-    -- reserved words
-    "access"                        { tok TokenAccess }
-    "false"                         { tok TokenFalse }
-    "loop"                          { tok TokenLoop }
-    "procedure"                     { tok TokenProcedure }
-    "true"                          { tok TokenTrue }
-    "and"                           { tok TokenAnd }
-    "for"                           { tok TokenFor }
-    "new"                           { tok TokenNew }
-    "record"                        { tok TokenRecord }
-    "type"                          { tok TokenType }
-    "begin"                         { tok TokenBegin }
-    "function"                      { tok TokenFunction }
-    "not"                           { tok TokenNot }
-    --"rem"                           { tok TokenRem }
-    "use"                           { tok TokenUse }
-    "else"                          { tok TokenElse }
-    "if"                            { tok TokenIf }
-    "null"                          { tok TokenNull }
-    "return"                        { tok TokenReturn }
-    "while"                         { tok TokenWhile }
-    "elsif"                         { tok TokenElsif }
-    "in"                            { tok TokenIn }
-    "or"                            { tok TokenOr }
-    "reverse"                       { tok TokenReverse }
-    "with"                          { tok TokenWith }
-    "end"                           { tok TokenEnd }
-    "is"                            { tok TokenIs }
-    "out"                           { tok TokenOut }
-    "then"                          { tok TokenThen }
+    $digit+                                           { tok_read TokenInt }
+    \' . \'                                           { tok_char TokenChar }
     -- operations
-    "="                             { tok TokenEqual }
-    "/="                            { tok TokenNotEqual }
-    "<"                             { tok TokenLower }
-    "<="                            { tok TokenLowerEqual }
-    ">"                             { tok TokenGreater }
-    ">="                            { tok TokenGreaterEqual }
-    "+"                             { tok TokenAdd }
-    "-"                             { tok TokenSubtract }
-    "*"                             { tok TokenMultiply }
-    "/"                             { tok TokenDivide }
-    "("                             { tok TokenLParent }
-    ")"                             { tok TokenRParent }
-    "rem"                           { tok TokenRem }
+    "="                                               { tok TokenEqual }
+    "/="                                              { tok TokenNotEqual }
+    "<"                                               { tok TokenLower }
+    "<="                                              { tok TokenLowerEqual }
+    ">"                                               { tok TokenGreater }
+    ">="                                              { tok TokenGreaterEqual }
+    "+"                                               { tok TokenAdd }
+    "-"                                               { tok TokenSubtract }
+    "*"                                               { tok TokenMultiply }
+    "/"                                               { tok TokenDivide }
+    "("                                               { tok TokenLParent }
+    ")"                                               { tok TokenRParent }
+    "rem"                                             { tok TokenRem }
     -- Some other characters
-    ":="                            { tok TokenAssign }
-    ";"                             { tok TokenSemicolon }
-    "."                             { tok TokenDot }
-    ":"                             { tok TokenColon }
-    ","                             { tok TokenComma }
-    ".."                            { tok TokenDoubledot }
-    "character'val"                 { tok TokenCharval }
-    -- identifier
-    $alpha [$alpha $digit \_ ]*     { tok_string TokenIdent }
+    ":="                                              { tok TokenAssign }
+    ";"                                               { tok TokenSemicolon }
+    "."                                               { tok TokenDot }
+    ":"                                               { tok TokenColon }
+    ","                                               { tok TokenComma }
+    ".."                                              { tok TokenDoubledot }
+    [cC][hH][aA][rR][aA][cC][tT][eE][rR]'[vV][aA][lL] { tok TokenCharval }
+    -- identifier and reserved
+    $alpha [$alpha $digit \_ ]*                       { tok_string TokenIdent }
 
 {
 
@@ -86,11 +56,29 @@ tok' f (p,_,_,s) i = getFilePath >>= (\fp -> return $ (f (Position p fp) (take i
 tok :: (Position -> Token) -> AlexAction Token
 tok x = tok' $ \p _ -> x p
 
+reserved = [ ("access", TokenAccess),  ("false",TokenFalse),
+             ("loop",TokenLoop),       ("procedure",TokenProcedure),
+             ("true",TokenTrue),       ("and",TokenAnd),
+             ("for",TokenFor),         ("new",TokenNew),
+             ("record",TokenRecord),   ("type",TokenType),
+             ("begin",TokenBegin),     ("function",TokenFunction),
+             ("not",TokenNot),         ("use",TokenUse),
+             ("else",TokenElse),       ("if",TokenIf),
+             ("null",TokenNull),       ("return",TokenReturn),
+             ("while",TokenWhile),     ("elsif",TokenElsif),
+             ("in",TokenIn),           ("or",TokenOr),
+             ("reverse",TokenReverse), ("with",TokenWith),
+             ("end",TokenEnd),         ("is",TokenIs),
+             ("out",TokenOut),         ("then",TokenThen) ]
+
 tok_read :: ((Position, Integer) -> Token) -> AlexAction Token
 tok_read x = tok' $ \p s -> x (p, (read s))
 
 tok_string :: ((Position, String) -> Token) -> AlexAction Token
-tok_string x = tok' $ \p s -> x (p, s)
+tok_string x = tok' $ \p s' ->
+                          let s = map toLower s' in
+                          let d = lookup s reserved in
+                          maybe (x (p, s)) ($ p) d
 
 tok_char :: ((Position, Char) -> Token) -> AlexAction Token
 tok_char x = tok' $ \p s -> x (p, (head . tail $ s))
@@ -120,8 +108,7 @@ alexInitUserState = AlexUserState "<unknown>"
 -- almost identical to the one generated by alex
 alexMonadScan' :: Alex Token
 alexMonadScan' = do
-  (pos, pc, b, str)  <- alexGetInput
-  let inp = (pos, pc, b, map toLower str)
+  inp <- alexGetInput
   sc <- alexGetStartCode
   case alexScan inp sc of
     AlexEOF -> alexEOF
