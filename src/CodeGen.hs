@@ -384,12 +384,37 @@ genFunction prev name func decl instrs = do
 
     genExpr (TEAccess a, (CType t _ _)) = do
         genAccess a
-        unless (isRecOrAccess t) $ movq (Pointer rax 0) rax
+        case t of
+            TInteger -> do
+                movq (Pointer rax 0) rax
+            TCharacter -> do
+                movzbq (Pointer rax 0) rax
+            TBoolean -> do
+                movzbq (Pointer rax 0) rax
+            TRecord i -> do
+                return ()
+            TAccess _ -> do
+                return ()
+            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
 
-    genExpr (TEBinop op e1 e2, _) =
+
+    genExpr (TEBinop op e1 e2, ct) =
         case op of
-            Equal -> evalCond sete
-            NotEqual -> evalCond setne
+            Equal -> case ctypeToTyped . snd $ e1 of
+                TRecord i -> do
+                    evalBothExpr
+                    falseLab <- getLabel
+                    endLab <- getLabel
+                    bigCond rax rbx (getSize decls i) 0 falseLab
+                    movq (int 1) rax
+                    jmp endLab
+                    label falseLab
+                    movq (int 0) rax
+                    label endLab
+                _ -> evalCond sete
+            NotEqual -> do
+                genExpr (TEBinop Equal e1 e2, ct)
+                xorq (int 1) rax
             Lower -> evalCond setl
             LowerEqual -> evalCond setle
             Greater -> evalCond setg
@@ -433,6 +458,30 @@ genFunction prev name func decl instrs = do
             cmpq rbx rax
             setcond al
             andq (int 1) rax
+        bigCond :: Register -> Register -> Integer -> Integer -> Label -> Asm ()
+        bigCond reg1 reg2 size off falseLab
+            | size >= 8 = do
+                movq (Pointer reg1 off) r11
+                cmpq r11 (Pointer reg2 off)
+                jnz falseLab
+                bigCond reg1 reg2 (size-8) (off+8) falseLab
+            | size >= 4 = do
+                movl (Pointer reg1 off) r11d
+                cmpl r11d (Pointer reg2 off)
+                jnz falseLab
+                bigCond reg1 reg2 (size-4) (off+4) falseLab
+            | size >= 2 = do
+                movw (Pointer reg1 off) r11w
+                cmpw r11w (Pointer reg2 off)
+                jnz falseLab
+                bigCond reg1 reg2 (size-2) (off+2) falseLab
+            | size >= 1 = do
+                movb (Pointer reg1 off) r11b
+                cmpb r11b (Pointer reg2 off)
+                jnz falseLab
+                bigCond reg1 reg2 (size-1) (off+1) falseLab
+            | otherwise = do
+                return ()
 
     genExpr (TEUnop op e, _) = do
         genExpr e
