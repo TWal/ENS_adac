@@ -88,7 +88,7 @@ endSource =
     "call printf\n" ++
     "ret\n" ++
     "put:\n" ++
-    "movq 16(%rsp), %rdi\n" ++
+    "movzbq 16(%rsp), %rdi\n" ++
     "jmp putchar\n" ++
     "new_line:\n" ++
     "movq $10, %rdi\n" ++

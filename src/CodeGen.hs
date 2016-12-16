@@ -36,6 +36,9 @@ getTypedSize' t f g =
         TAccess _ -> f 8
         TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
 
+ctypeToTyped :: CType -> Typed
+ctypeToTyped (CType t _ _) = t
+
 isRecord :: Typed -> Bool
 isRecord (TRecord _) = True
 isRecord _ = False
@@ -106,15 +109,15 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
         if fromIntegral level <= length prev then getSize prev (level, name)
         else recordedSize ! name)
 
-    compOffsets :: [(String, CType)] -> ([(String, Integer)], Integer)
-    compOffsets list = (zip (map fst list) (tail sizes), last sizes)
+    compOffsets :: Bool -> [(String, CType)] -> ([(String, Integer)], Integer)
+    compOffsets doTail list = (zip (map fst list) ((if doTail then tail else id) sizes), last sizes)
       where sizes = scanl (+) 0 . map ((\(CType t _ _) -> typedSize t) . snd) $ list
 
     offsets :: (Map String Integer, Integer, Integer)
-    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-8-8)) . fst $ argsOffs), snd varOffs, snd argsOffs)
+    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-24)) . fst $ argsOffs), snd varOffs, snd argsOffs)
       where
-        varOffs = compOffsets . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
-        argsOffs = compOffsets . getParams $ func
+        varOffs = compOffsets True . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
+        argsOffs = compOffsets False. getParams $ func
 
     compNbNestedFor :: TInstr -> Integer
     compNbNestedFor (TIAssign _ _) = 0
@@ -198,8 +201,26 @@ genFunction prev name func decl instrs = do
     doFctCall :: String -> [TPExpr] -> Asm ()
     doFctCall s args = do
         forM_ (reverse' args) (\e -> do
+            let t = ctypeToTyped . snd $ e
             genExpr e
-            pushq rax
+            case t of
+                TInteger -> do
+                    subq (int 8) rsp
+                    movq rax (Pointer rsp 0)
+                TCharacter -> do
+                    subq (int 1) rsp
+                    movb al (Pointer rsp 0)
+                TBoolean -> do
+                    subq (int 1) rsp
+                    movb al (Pointer rsp 0)
+                TRecord i -> do
+                    let size = typedSize t
+                    subq size rsp
+                    bigCopy rax rsp size 0
+                TAccess _ -> do
+                    subq (int 8) rsp
+                    movq rax (Pointer rsp 0)
+                TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
             )
         movq rbp rax
         unless (s `elem` ["print_int__", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
@@ -207,7 +228,8 @@ genFunction prev name func decl instrs = do
         call (Label s)
         popq rax
         forM_ (reverse' args) (\e -> do
-            popq rax
+            let size = typedSize . ctypeToTyped . snd $ e
+            addq size rsp
             )
 
     bigCopy :: Register -> Register -> Integer -> Integer -> Asm ()
@@ -233,18 +255,34 @@ genFunction prev name func decl instrs = do
 
     genInstr :: TInstr -> Asm ()
 
-    genInstr (TIAssign acc e) = case snd e of
-        CType (TRecord i) _ _ -> do
-            genExpr e
-            movq rax r10 -- r10 is not used anywhere else
-            genAccess acc
-            bigCopy r10 rax (getSize decls i) 0
-        _ -> do
-            genExpr e
-            pushq rax
-            genAccess acc
-            popq rbx
-            movq rbx (Pointer rax 0)
+    genInstr (TIAssign acc e) = do
+        genExpr e
+        case ctypeToTyped . snd $ e of
+            TInteger -> do
+                pushq rax
+                genAccess acc
+                popq rbx
+                movq rbx (Pointer rax 0)
+            TCharacter -> do
+                pushq rax
+                genAccess acc
+                popq rbx
+                movb bl (Pointer rax 0)
+            TBoolean -> do
+                pushq rax
+                genAccess acc
+                popq rbx
+                movb bl (Pointer rax 0)
+            TRecord i -> do
+                movq rax r10 -- r10 is not used anywhere else
+                genAccess acc
+                bigCopy r10 rax (getSize decls i) 0
+            TAccess _ -> do
+                pushq rax
+                genAccess acc
+                popq rbx
+                movq rbx (Pointer rax 0)
+            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
 
     genInstr (TIIdent s) = do
         doFctCall s []
