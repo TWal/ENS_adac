@@ -36,9 +36,13 @@ getTypedSize' t f g =
         TAccess _ -> f 8
         TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
 
-isRecOrAccess :: CType -> Bool
-isRecOrAccess (CType (TAccess _) _ _) = True
-isRecOrAccess (CType (TRecord _) _ _) = True
+isRecord :: Typed -> Bool
+isRecord (TRecord _) = True
+isRecord _ = False
+
+isRecOrAccess :: Typed -> Bool
+isRecOrAccess (TAccess _) = True
+isRecOrAccess (TRecord _) = True
 isRecOrAccess _ = False
 
 getParams :: Functionnal -> [(String, CType)]
@@ -99,7 +103,7 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (\(level, name) ->
-        if fromIntegral level < length prev then getSize prev (level, name)
+        if fromIntegral level <= length prev then getSize prev (level, name)
         else recordedSize ! name)
 
     compOffsets :: [(String, CType)] -> ([(String, Integer)], Integer)
@@ -206,14 +210,41 @@ genFunction prev name func decl instrs = do
             popq rax
             )
 
+    bigCopy :: Register -> Register -> Integer -> Integer -> Asm ()
+    bigCopy reg1 reg2 size off
+        | size >= 8 = do
+            movq (Pointer reg1 off) r11
+            movq r11 (Pointer reg2 off)
+            bigCopy reg1 reg2 (size-8) (off+8)
+        | size >= 4 = do
+            movl (Pointer reg1 off) r11d
+            movl r11d (Pointer reg2 off)
+            bigCopy reg1 reg2 (size-4) (off+4)
+        | size >= 2 = do
+            movw (Pointer reg1 off) r11w
+            movw r11w (Pointer reg2 off)
+            bigCopy reg1 reg2 (size-2) (off+2)
+        | size >= 1 = do
+            movb (Pointer reg1 off) r11b
+            movb r11b (Pointer reg2 off)
+            bigCopy reg1 reg2 (size-1) (off+1)
+        | otherwise = do
+            return ()
+
     genInstr :: TInstr -> Asm ()
 
-    genInstr (TIAssign acc e) = do
-        genExpr e
-        pushq rax
-        genAccess acc
-        popq rbx
-        movq rbx (Pointer rax 0)
+    genInstr (TIAssign acc e) = case snd e of
+        CType (TRecord i) _ _ -> do
+            genExpr e
+            movq rax r10 -- r10 is not used anywhere else
+            genAccess acc
+            bigCopy r10 rax (getSize decls i) 0
+        _ -> do
+            genExpr e
+            pushq rax
+            genAccess acc
+            popq rbx
+            movq rbx (Pointer rax 0)
 
     genInstr (TIIdent s) = do
         doFctCall s []
@@ -229,7 +260,13 @@ genFunction prev name func decl instrs = do
 
     genInstr (TIReturn (Just e)) = do
         genExpr e
-        movq rax (Pointer rbp ((+24) . argsSize . snd . last $ decls))
+        let off = (+24) . argsSize . snd . last $ decls
+        case snd e of
+            CType (TRecord i) _ _ -> do
+                leaq (Pointer rbp off) rbx
+                bigCopy rax rbx (getSize decls i) 0
+            _ -> do
+                movq rax (Pointer rbp off)
         genInstr (TIReturn Nothing)
 
     -- It's useful only for the typer to shadow names
@@ -307,7 +344,7 @@ genFunction prev name func decl instrs = do
     genExpr (TENull, _) = do
         movq (int 0) rax
 
-    genExpr (TEAccess a, t) = do
+    genExpr (TEAccess a, (CType t _ _)) = do
         genAccess a
         unless (isRecOrAccess t) $ movq (Pointer rax 0) rax
 
@@ -369,10 +406,12 @@ genFunction prev name func decl instrs = do
 
     genExpr (TENew s, _) = error "Not implemented"
 
-    genExpr (TECall s args, _) = do
-        pushq rax -- args
+    genExpr (TECall s args, CType t _ _) = do
+        subq (typedSize t) rsp
         doFctCall s args
-        popq rax
+        if isRecord t then movq rsp rax
+        else movq (Pointer rsp 0) rax
+        addq (typedSize t) rsp
 
 
 

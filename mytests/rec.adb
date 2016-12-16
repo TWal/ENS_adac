@@ -21,9 +21,11 @@ begin
     print_int__(a.bar.bar);
     a.bar.baz := 5;
     print_int__(a.bar.baz);
-    put('a');
-    new_line;
-    new_line;
-    new_line;
+    print_int__(a.foo.foo);
+    print_int__(a.foo.bar);
+    print_int__(a.foo.baz);
+    print_int__(a.bar.foo);
+    print_int__(a.bar.bar);
+    print_int__(a.bar.baz);
 end;
 
