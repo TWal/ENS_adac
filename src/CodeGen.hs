@@ -224,6 +224,7 @@ genFunction prev name func decl instrs = do
     genInstr (TIReturn Nothing) = do
         addq fs rsp
         popq rbp
+        movq (int 0) rax
         ret
 
     genInstr (TIReturn (Just e)) = do
