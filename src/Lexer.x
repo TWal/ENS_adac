@@ -60,7 +60,7 @@ reserved = [ ("access", TokenAccess),  ("false",TokenFalse),
              ("loop",TokenLoop),       ("procedure",TokenProcedure),
              ("true",TokenTrue),       ("and",TokenAnd),
              ("for",TokenFor),         ("new",TokenNew),
-             ("record",TokenRecord,    ("type",TokenType),
+             ("record",TokenRecord),   ("type",TokenType),
              ("begin",TokenBegin),     ("function",TokenFunction),
              ("not",TokenNot),         ("use",TokenUse),
              ("else",TokenElse),       ("if",TokenIf),
@@ -75,12 +75,10 @@ tok_read :: ((Position, Integer) -> Token) -> AlexAction Token
 tok_read x = tok' $ \p s -> x (p, (read s))
 
 tok_string :: ((Position, String) -> Token) -> AlexAction Token
-tok_string x = tok' $ \p S ->
-                          let s = map toLower S
+tok_string x = tok' $ \p s' ->
+                          let s = map toLower s' in
                           let d = lookup s reserved in
-                          case d of
-                           Nothing -> x (p, s)
-                           Just tk -> tk
+                          maybe (x (p, s)) ($ p) d
 
 tok_char :: ((Position, Char) -> Token) -> AlexAction Token
 tok_char x = tok' $ \p s -> x (p, (head . tail $ s))

@@ -71,7 +71,7 @@ genFichier (TFichier _ decls l) = do
 
     computeAccessAddr :: TAccess -> Asm ()
     computeAccessAddr (AccessFull str) = do
-        let off = foldr (+) 0 . map (\(CType t _ _) -> typedSize t) .  map (fst . snd) . takeWhile (\(s,_) -> s /= str) $ M.toList (dvars decls)
+        let off = foldr (+) 0 . map (\(CType t _ _) -> typedSize t) .  map (fst . snd) . takeWhile (\(s,_) -> s /= (snd str)) $ M.toList (dvars decls)
         leaq (Pointer rbp (off+42)) rax
     computeAccessAddr (AccessPart e str) = error "Not implemented"
 
