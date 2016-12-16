@@ -12,13 +12,13 @@ procedure Test is
         end;
     begin
         foo := 0;
-        print_int(x+3);
-        print_int(y-3);
+        print_int__(x+3);
+        print_int__(y-3);
         tmp := Blu(x+3, y-3);
         return foo+tmp;
     end;
 begin
-    print_int(bla(42, 57)); --198
-    print_int(bla(1337, -50)); --2574
+    print_int__(bla(42, 57)); --198
+    print_int__(bla(1337, -50)); --2574
 end;
 

@@ -10,17 +10,17 @@ procedure Test is
     a : R2;
 begin
     a.foo.foo := 0;
-    print_int(a.foo.foo);
+    print_int__(a.foo.foo);
     a.foo.bar := 1;
-    print_int(a.foo.bar);
+    print_int__(a.foo.bar);
     a.foo.baz := 2;
-    print_int(a.foo.baz);
+    print_int__(a.foo.baz);
     a.bar.foo := 3;
-    print_int(a.bar.foo);
+    print_int__(a.bar.foo);
     a.bar.bar := 4;
-    print_int(a.bar.bar);
+    print_int__(a.bar.bar);
     a.bar.baz := 5;
-    print_int(a.bar.baz);
+    print_int__(a.bar.baz);
     put('a');
     new_line;
     new_line;

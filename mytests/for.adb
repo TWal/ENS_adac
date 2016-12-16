@@ -8,7 +8,7 @@ procedure Test is
         for I in 1 .. 10 loop
             Put(character'val(bar+I));
             New_Line;
-            for I in 1 .. 10 loop
+            for I in reverse 1 .. 10 loop
                 Put(character'val(foo+I));
                 New_Line;
             end loop;

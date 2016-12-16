@@ -8,7 +8,7 @@ begin
     a := 0;
     b := 1;
     while a < 1000 loop
-        print_int(a);
+        print_int__(a);
         tmp := a+b;
         a := b;
         b := tmp;

@@ -13,16 +13,16 @@ procedure Test is
         end;
     begin
         Blu(x, y);
-        print_int(foo);
-        print_int(bar);
+        print_int__(foo);
+        print_int__(bar);
     end;
 begin
     sum := 0;
-    print_int(sum);
+    print_int__(sum);
     bla(42, 57);
-    print_int(sum);
+    print_int__(sum);
     bla(1337, -50);
-    print_int(sum);
+    print_int__(sum);
 end;
 
 

@@ -955,7 +955,7 @@ type_program f = S.evalStateT (type_file f) (Bottom (0, e))
  where e = Context vars funs tps St.empty
        funs = M.fromList
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
-              , ("print_int", TProcedure $ TParams [("i", CType TInteger False True)])
+              , ("print_int__", TProcedure $ TParams [("i", CType TInteger False True)])
               , ("new_line", TProcedure $ TParams [])
               ]
        tps  = M.fromList

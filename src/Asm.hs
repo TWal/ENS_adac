@@ -81,7 +81,7 @@ beginSource =
 
 endSource :: String
 endSource =
-    "print_int:\n" ++
+    "print_int__:\n" ++
     "mov 16(%rsp), %rsi\n" ++
     "mov $message, %rdi\n" ++
     "mov $0, %rax\n" ++

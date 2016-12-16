@@ -4,8 +4,8 @@ procedure Test is
         foo : Integer := x+y;
         bar : Integer := x-y;
     begin
-        print_int(foo);
-        print_int(bar);
+        print_int__(foo);
+        print_int__(bar);
     end;
 begin
     bla(42, 57);

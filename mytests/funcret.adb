@@ -4,7 +4,7 @@ procedure Test is
         return x+y;
     end;
 begin
-    print_int(bla(42, 57));
-    print_int(bla(1337, -50));
+    print_int__(bla(42, 57));
+    print_int__(bla(1337, -50));
 end;
 

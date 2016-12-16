@@ -2,9 +2,9 @@ with Ada.Text_IO; use Ada.Text_IO;
 procedure Test is
     procedure Bla(foo : Integer; bar : Integer) is
     begin
-        print_int(foo);
-        print_int(bar);
-        print_int(foo+bar);
+        print_int__(foo);
+        print_int__(bar);
+        print_int__(foo+bar);
     end;
 begin
     Bla(0, 1);

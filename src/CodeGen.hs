@@ -198,7 +198,7 @@ genFunction prev name func decl instrs = do
             pushq rax
             )
         movq rbp rax
-        unless (s `elem` ["print_int", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
+        unless (s `elem` ["print_int__", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
         pushq rax
         call (Label s)
         popq rax
@@ -250,12 +250,14 @@ genFunction prev name func decl instrs = do
         label endLabel
 
     genInstr (TIFor id rev from to instrs) = do
-        genExpr from
+        if rev then genExpr to
+        else genExpr from
         pushq rax
         genAccess (AccessFull id)
         popq rbx
         movq rbx (Pointer rax 0)
-        genExpr to
+        if rev then genExpr from
+        else genExpr to
         pushq rax
         bodyLabel <- getLabel
         condLabel <- getLabel
