@@ -15,7 +15,8 @@ module Asm (
     je, jne, jz, jnz, js, jns, jg, jge, jl, jle, ja, jae, jb, jbe,
     sete, setne, setz, setnz, sets, setns, setg, setge, setl, setle, seta, setae, setb, setbe,
     cmove, cmovne, cmovz, cmovnz, cmovs, cmovns, cmovg, cmovge, cmovl, cmovle, cmova, cmovae, cmovb, cmovbe,
-    label, jmp, call, leave, ret
+    label, jmp, call, leave, ret,
+    comment
 ) where
 
 import Data.Char (toLower)
@@ -546,3 +547,6 @@ leave :: Asm ()
 ret :: Asm ()
 leave = ins0 "leave"
 ret = ins0 "ret"
+
+comment :: String -> Asm ()
+comment s = addCode ('#':s)

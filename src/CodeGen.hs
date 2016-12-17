@@ -298,13 +298,21 @@ genFunction prev name func decl instrs = do
 
     genInstr (TIReturn (Just e)) = do
         genExpr e
+        comment "Here"
         let off = (+24) . argsSize . snd . last $ decls
-        case snd e of
-            CType (TRecord i) _ _ -> do
+        case ctypeToTyped . snd $ e of
+            TInteger -> do
+                movq rax (Pointer rbp off)
+            TCharacter -> do
+                movb al (Pointer rbp off)
+            TBoolean -> do
+                movb al (Pointer rbp off)
+            TRecord i -> do
                 leaq (Pointer rbp off) rbx
                 bigCopy rax rbx (getSize decls i) 0
-            _ -> do
+            TAccess _ -> do
                 movq rax (Pointer rbp off)
+            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
         genInstr (TIReturn Nothing)
 
     -- It's useful only for the typer to shadow names
@@ -496,8 +504,18 @@ genFunction prev name func decl instrs = do
     genExpr (TECall s args, CType t _ _) = do
         subq (typedSize t) rsp
         doFctCall s args
-        if isRecord t then movq rsp rax
-        else movq (Pointer rsp 0) rax
+        case t of
+            TInteger ->
+                movq (Pointer rsp 0) rax
+            TCharacter ->
+                movzbq (Pointer rsp 0) rax
+            TBoolean ->
+                movzbq (Pointer rsp 0) rax
+            TRecord i ->
+                movq rsp rax
+            TAccess _ ->
+                movq (Pointer rsp 0) rax
+            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
         addq (typedSize t) rsp
 
 
