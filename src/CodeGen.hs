@@ -36,7 +36,7 @@ getTypedSize' t f g =
         TBoolean -> f 1
         TRecord i -> g i
         TAccess _ -> f 8
-        TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+        TypeNull -> f 8
 
 ctypeToTyped :: CType -> Typed
 ctypeToTyped (CType t _ _) = t
@@ -229,7 +229,9 @@ genFunction prev name func decl instrs = do
                 TAccess _ -> do
                     subq (int 8) rsp
                     movq rax (Pointer rsp 0)
-                TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+                TypeNull -> do
+                    subq (int 8) rsp
+                    movq (int 0) (Pointer rsp 0)
             )
         movq rbp rax
         unless (s `elem` ["print_int__", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
@@ -291,7 +293,10 @@ genFunction prev name func decl instrs = do
                 genAccess acc
                 popq rbx
                 movq rbx (Pointer rax 0)
-            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+            TypeNull -> do
+                -- Small optimisation : genExpr only wrote 0 to rax
+                genAccess acc
+                movq (int 0) (Pointer rax 0)
 
     genInstr (TIIdent s) = do
         doFctCall s []
@@ -307,7 +312,6 @@ genFunction prev name func decl instrs = do
 
     genInstr (TIReturn (Just e)) = do
         genExpr e
-        comment "Here"
         let off = (+24) . argsSize . snd . last $ decls
         case ctypeToTyped . snd $ e of
             TInteger -> do
@@ -321,7 +325,8 @@ genFunction prev name func decl instrs = do
                 bigCopy rax rbx (getSize decls i) 0
             TAccess _ -> do
                 movq rax (Pointer rbp off)
-            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+            TypeNull -> do
+                movq (int 0) (Pointer rbp off)
         genInstr (TIReturn Nothing)
 
     -- It's useful only for the typer to shadow names
@@ -412,7 +417,8 @@ genFunction prev name func decl instrs = do
                 return ()
             TAccess _ -> do
                 movq (Pointer rax 0) rax
-            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+            TypeNull -> do -- Shouldn't happen
+                movq (int 0) rax
 
 
     genExpr (TEBinop op e1 e2, ct) =
@@ -527,7 +533,8 @@ genFunction prev name func decl instrs = do
                 movq rsp rax
             TAccess _ ->
                 movq (Pointer rsp 0) rax
-            TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
+            TypeNull -> -- Shouldn't happen
+                movq (int 0) rax
         addq (typedSize t) rsp
 
 
