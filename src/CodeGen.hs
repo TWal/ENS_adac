@@ -463,11 +463,23 @@ genFunction prev name func decl instrs = do
             And -> do
                 evalBothExpr
                 andq rbx rax
-            AndThen -> error "TODO"
+            AndThen -> do
+                genExpr e1
+                testb al al
+                lbl <- getLabel
+                je lbl
+                genExpr e2
+                label lbl
             Or -> do
                 evalBothExpr
                 orq rbx rax
-            OrElse -> error "TODO"
+            OrElse -> do
+                genExpr e1
+                testb al al
+                lbl <- getLabel
+                jne lbl
+                genExpr e2
+                label lbl
         where
         evalBothExpr :: Asm ()
         evalBothExpr = do
