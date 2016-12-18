@@ -319,7 +319,7 @@ data TExpr =
   | TEAccess TAccess
   | TEBinop (Binop ()) TPExpr TPExpr
   | TEUnop (Unop ()) TPExpr
-  | TENew String
+  | TENew TId
   | TECall String [TPExpr]
   | TECharval TPExpr
 data TAccess = AccessFull TId | AccessPart TPExpr String
@@ -647,7 +647,7 @@ type_expr (ENew (Ident r,pr), pe) = do
         Just (Record _) -> return ()
         Just t2         -> lerror pr $ "expected defined record"
     (Just l) <- contextOf r
-    return (TENew r, CType (TAccess (l,r)) False True)
+    return (TENew (l,r), CType (TAccess (l,r)) False True)
 type_expr (ECharval e@(_,pe), pc) = do
     ne@(_,(CType te _ b)) <- type_expr e
     if not b then lerror pe "is not rvalue" else return ()
