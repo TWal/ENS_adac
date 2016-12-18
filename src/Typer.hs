@@ -701,7 +701,7 @@ type_access (AccesDot ie@(_,pe) (Ident f, pf)) = do
                                      then type_lookup (Just l) n pe >>= \x -> return $ CType x True b2
                                      else get_sub (l,n) pe f pf     >>= \x -> return $ CType x True b2
      CType (TRecord s)     b1 b2 -> get_sub s pe f pf >>= \x -> return $ CType x b1   b2
-     _                       -> lerror pe $ "expression does not evaluate to a record"
+     CType t               _  _  -> lerror pe $ "expression does not evaluate to a record but a " ++ show t
     return (TEAccess $ AccessPart te f, rtp)
  where get_sub :: TId -> Position -> String -> Position -> Env Typed
        get_sub (c,s) ps f pf = do
