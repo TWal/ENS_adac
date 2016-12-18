@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 shopt -s nullglob
 
@@ -25,7 +25,8 @@ for f in mytests/*.adb; do
                 score_test=`expr $score_test + 1`;
             else
                 echo
-                echo "ECHEC : mauvaise sortie pour $f"
+                echo "ECHEC : mauvaise sortie pour $f :"
+                cat /tmp/out
             fi
         else
             echo
