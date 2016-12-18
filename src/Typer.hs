@@ -643,9 +643,8 @@ type_expr (EUnop (Negate, pu) e@(_,pe), pun) = do
 type_expr (ENew (Ident r,pr), pe) = do
     mt <- getTpe r
     case mt of
-        Nothing         -> lerror pr $ "type " ++ r ++ " is not defined"
-        Just (Record _) -> return ()
-        Just t2         -> lerror pr $ "expected defined record"
+        Nothing -> lerror pr $ "type " ++ r ++ " is not defined"
+        Just _  -> return ()
     (Just l) <- contextOf r
     return (TENew (l,r), CType (TAccess (l,r)) False True)
 type_expr (ECharval e@(_,pe), pc) = do
