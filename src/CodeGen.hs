@@ -20,6 +20,8 @@ data DeclSizes = DeclSizes
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
+-- TODO handle better level-0 declarations
+getSize decls (0, name) = if name == "integer" then 8 else 1
 getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral (level-1)) ! name
 
 getOffset :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -194,7 +196,11 @@ genFunction prev name func decl instrs = do
     genAccess (AccessPart e str) = do
         genExpr e
         case snd e of
-            CType (TAccess i) _ _ -> error "TODO"
+            CType (TAccess (level,name)) _ _ ->
+                when (str /= "all") $
+                    let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
+                    let ofs = getOffsets rec in
+                    leaq (Pointer rax (ofs ! str)) rax
             CType (TRecord (level, name)) _ _ ->
                 let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
                 let ofs = getOffsets rec in
@@ -405,7 +411,7 @@ genFunction prev name func decl instrs = do
             TRecord i -> do
                 return ()
             TAccess _ -> do
-                return ()
+                movq (Pointer rax 0) rax
             TypeNull -> error "ME DUNNO WAT IZ TEH SIZE OF NULL!!1!"
 
 
@@ -502,7 +508,10 @@ genFunction prev name func decl instrs = do
             Negate -> do
                 negq rax
 
-    genExpr (TENew s, _) = error "Not implemented"
+    genExpr (TENew s, _) = do
+        let size = getSize decls s
+        movq size rdi
+        call (Label "malloc")
 
     genExpr (TECall s args, CType t _ _) = do
         subq (typedSize t) rsp
