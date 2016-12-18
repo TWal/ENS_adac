@@ -4,7 +4,7 @@ import Asm
 import AST
 import Data.Char (ord)
 import Control.Monad
-import Control.Monad.State
+import Control.Monad.Trans.State.Strict
 import           Data.Map      (Map, (!))
 import qualified Data.Map      as M
 import Data.List (elemIndex)
@@ -57,7 +57,8 @@ reverse' = foldl (flip (:)) []
 
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (a, b, c) = f a b c
-
+ 
+type St = StateT (Map String Integer) (Either ())
 mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> NonEmptyList TInstr -> TDecls -> DeclSizes
 mkDeclSizes prev func funcname instrs decls = DeclSizes
     { tsizes = recordedSize
@@ -68,13 +69,13 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
     , nbNestedFor = nbNestedFor
     }
   where
-    addMemo :: String -> Integer -> State (Map String Integer) ()
+    addMemo :: String -> Integer -> St ()
     addMemo str size = state $ \map -> ((), M.insert str size map)
 
-    getMemo :: String -> State (Map String Integer) (Maybe Integer)
+    getMemo :: String -> St (Maybe Integer)
     getMemo str = state $ \map -> (M.lookup str map, map)
 
-    getRecordedSize :: TId -> State (Map String Integer) Integer
+    getRecordedSize :: TId -> St Integer
     getRecordedSize (level, name) =
         -- If it is on a previous level
         if fromIntegral level < length prev then
@@ -98,11 +99,13 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
                     addMemo name size
                     return size
 
-    getTypedSize :: Typed -> State (Map String Integer) Integer
+    getTypedSize :: Typed -> St Integer
     getTypedSize t = getTypedSize' t return getRecordedSize
 
     recordedSize :: Map String Integer
-    recordedSize = execState (mapM_ getRecordedSize (zip (repeat (fromIntegral $ length prev)) (M.keys (dtypes decls)))) M.empty
+    recordedSize = fromRight $ execStateT (mapM_ getRecordedSize (zip (repeat (fromIntegral $ length prev)) (M.keys (dtypes decls)))) M.empty
+
+    fromRight (Right x) = x
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (\(level, name) ->

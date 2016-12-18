@@ -20,7 +20,7 @@ module Asm (
 ) where
 
 import Data.Char (toLower)
-import Control.Monad.State
+import qualified Control.Monad.Trans.State.Strict as S
 
 data Register =
     Rax | Rbx | Rcx | Rdx | Rsi | Rdi | Rbp | Rsp | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15
@@ -67,13 +67,13 @@ instance Jmpable Label where
 instance (RValue a) => Jmpable (Star a) where
     labToStr (Star x) = "*(" ++ arg x ++ ")"
 
-type Asm = State (String, Integer)
+type Asm = S.StateT (String, Integer) (Either ())
 
 addCode :: String -> Asm ()
-addCode s = state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
+addCode s = S.state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
 
 getLabel :: Asm Label
-getLabel = state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
+getLabel = S.state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
 
 beginSource :: String
 beginSource =
@@ -99,7 +99,8 @@ endSource =
 
 
 getAssembly :: Asm a -> String
-getAssembly = (++ endSource) . (beginSource ++) . fst . flip execState ("", 0)
+getAssembly = (++ endSource) . (beginSource ++) . fst . fromRight . flip S.execStateT ("", 0)
+ where fromRight (Right x) = x
 
 -- Helper functions
 ins0 :: String -> Asm ()
