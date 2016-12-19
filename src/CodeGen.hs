@@ -139,7 +139,7 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
-    genFunction [] "main" (TProcedure (TParams [])) decl instrs
+    genFunction (M.fromList $ map (\x -> (x,x)) ["main", "print_int__", "put", "new_line"]) [] "main" (TProcedure (TParams [])) decl instrs
 
 -- Stack when a function is called;
 -- some space to give the return value
@@ -150,9 +150,12 @@ genFichier (TFichier _ decl instrs) =
 -- return address
 -- %rbp of caller
 -- local variables...
-genFunction :: [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
-genFunction prev name func decl instrs = do
-    label (Label name)
+-- 
+-- functions labels are of the form main.fn1.fn2 if fn1 is a subfunction of fn1, which is a toplevel
+-- function
+genFunction :: Map String String -> [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
+genFunction lbls prev name func decl instrs = do
+    label (Label lbl)
     pushq rbp
     movq rsp rbp
     subq fs rsp
@@ -162,9 +165,12 @@ genFunction prev name func decl instrs = do
     mapM_ genInstr instrs
     movq (int 0) rax
     genInstr (TIReturn Nothing)
-    mapM_ (\(s, f) -> uncurry3 (genFunction decls s) f) (M.toList $ dfuns decl)
+    mapM_ (\(s, f) -> uncurry3 (genFunction new_lbls decls s) f) (M.toList $ dfuns decl)
 
   where
+    lbl = lbls ! name
+    new_lbls = foldl (\m -> \s -> M.insert s (lbl ++ "." ++ s) m) lbls
+             $ map fst $ M.toList $ dfuns decl
 
     fs = frameSize . snd . last $ decls
     decls :: [(TDecls, DeclSizes)]
@@ -236,7 +242,7 @@ genFunction prev name func decl instrs = do
         movq rbp rax
         unless (s `elem` ["print_int__", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
         pushq rax
-        call (Label s)
+        call (Label $ new_lbls ! s)
         popq rax
         forM_ (reverse' args) (\e -> do
             let size = typedSize . ctypeToTyped . snd $ e
