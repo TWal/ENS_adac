@@ -82,6 +82,13 @@ beginSource =
 
 endSource :: String
 endSource =
+    "free__:\n" ++
+    "movq 16(%rsp), %rsi\n" ++
+    "movq (%rsi), %rsi\n" ++
+    "call free\n" ++
+    "movq 16(%rsp), %rsi\n" ++
+    "movq $0, (%rsi)\n" ++
+    "ret\n" ++
     "print_int__:\n" ++
     "mov 16(%rsp), %rsi\n" ++
     "mov $message, %rdi\n" ++

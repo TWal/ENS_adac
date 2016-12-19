@@ -139,7 +139,7 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
-    genFunction (M.fromList $ map (\x -> (x,x)) ["main", "print_int__", "put", "new_line"]) [] "main" (TProcedure (TParams [])) decl instrs
+    genFunction (M.fromList $ map (\x -> (x,x)) ["main", "print_int__", "put", "new_line", "free__"]) [] "main" (TProcedure (TParams [])) decl instrs
 
 -- Stack when a function is called;
 -- some space to give the return value
@@ -240,7 +240,7 @@ genFunction lbls prev name func decl instrs = do
                     movq (int 0) (Pointer rsp 0)
             )
         movq rbp rax
-        unless (s `elem` ["print_int__", "new_line", "put"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
+        unless (s `elem` ["print_int__", "new_line", "put", "free__"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
         pushq rax
         call (Label $ new_lbls ! s)
         popq rax

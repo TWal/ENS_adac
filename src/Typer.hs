@@ -672,8 +672,9 @@ cmppr (e@(_,pe),(s,CType t o i)) = do
     if i && not b2 then lerror pe "expecting a rvalue for in parameter"
     else if o && not b1 then lerror pe "expecting a lvalue for out parameter"
     else return ()
-    if is_access t && te == TypeNull then return ne
-    else if t == te                  then return ne
+    if is_access t && te == TypeNull      then return ne
+    else if t == TypeNull && is_access te then return ne
+    else if t == te                       then return ne
     else lerror pe $ "expected " ++ show t ++ ", got " ++ show te ++ " for " ++ s
 
 
@@ -956,6 +957,7 @@ type_program f = S.evalStateT (type_file f) (Bottom (0, e))
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
               , ("print_int__", TProcedure $ TParams [("i", CType TInteger False True)])
               , ("new_line", TProcedure $ TParams [])
+              , ("free__", TProcedure $ TParams [("a", CType TypeNull True True)])
               ]
        tps  = M.fromList
               [ ("integer",   RNType TInteger)
