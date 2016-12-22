@@ -9,6 +9,7 @@ import           Data.Map      (Map, (!))
 import qualified Data.Map      as M
 import Data.List (elemIndex)
 import Data.Maybe (maybe)
+import Debug.Trace
 
 data DeclSizes = DeclSizes
     { tsizes :: Map String Integer
@@ -17,6 +18,7 @@ data DeclSizes = DeclSizes
     , argsSize :: Integer
     , fctName :: String
     , nbNestedFor :: Integer
+    , pointers :: [String]
     }
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -26,6 +28,22 @@ getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral (level-1)) ! n
 
 getOffset :: [(TDecls, DeclSizes)] -> TId -> Integer
 getOffset decls (level, name) = voffs (snd $ decls !! fromIntegral (level-1)) ! name
+
+isPointer :: [(TDecls, DeclSizes)] -> TId -> Bool
+isPointer decls (level, name) = name `elem` (pointers (snd $ decls !! fromIntegral (level-1)))
+
+findFunctionnal :: [(TDecls, DeclSizes)] -> String -> Functionnal
+findFunctionnal decls s =
+    aux . reverse $ (level0 : (map ((M.map fst3) . dfuns . fst) decls))
+  where
+    aux (h:t) = maybe (aux t) id (M.lookup s h)
+    fst3 (x, _, _) = x
+    level0 = M.fromList
+              [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
+              , ("print_int__", TProcedure $ TParams [("i", CType TInteger False True)])
+              , ("new_line", TProcedure $ TParams [])
+              , ("free__", TProcedure $ TParams [("a", CType TypeNull True True)])
+              ]
 
 -- Generic function to avoid copy past
 getTypedSize' :: Typed -> (Integer -> a) -> (TId -> a) -> a
@@ -40,6 +58,9 @@ getTypedSize' t f g =
 
 ctypeToTyped :: CType -> Typed
 ctypeToTyped (CType t _ _) = t
+
+isOut :: CType -> Bool
+isOut (CType _ b _) = b
 
 isRecord :: Typed -> Bool
 isRecord (TRecord _) = True
@@ -59,7 +80,7 @@ reverse' = foldl (flip (:)) []
 
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (a, b, c) = f a b c
- 
+
 type St = StateT (Map String Integer) (Either ())
 mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> NonEmptyList TInstr -> TDecls -> DeclSizes
 mkDeclSizes prev func funcname instrs decls = DeclSizes
@@ -69,6 +90,7 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
     , argsSize = (\(_,_,x) -> x) offsets
     , fctName = funcname
     , nbNestedFor = nbNestedFor
+    , pointers = pointers
     }
   where
     addMemo :: String -> Integer -> St ()
@@ -114,15 +136,15 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
         if fromIntegral level <= length prev then getSize prev (level, name)
         else recordedSize ! name)
 
-    compOffsets :: Bool -> [(String, CType)] -> ([(String, Integer)], Integer)
-    compOffsets doTail list = (zip (map fst list) ((if doTail then tail else id) sizes), last sizes)
-      where sizes = scanl (+) 0 . map ((\(CType t _ _) -> typedSize t) . snd) $ list
+    compOffsets :: Bool -> (CType -> Integer) -> [(String, CType)] -> ([(String, Integer)], Integer)
+    compOffsets doTail getSize list = (zip (map fst list) ((if doTail then tail else id) sizes), last sizes)
+      where sizes = scanl (+) 0 . map (getSize . snd) $ list
 
     offsets :: (Map String Integer, Integer, Integer)
     offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-24)) . fst $ argsOffs), snd varOffs, snd argsOffs)
       where
-        varOffs = compOffsets True . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
-        argsOffs = compOffsets False. getParams $ func
+        varOffs = compOffsets True (typedSize . ctypeToTyped) . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
+        argsOffs = compOffsets False (\t -> if isOut t then 8 else typedSize . ctypeToTyped $ t) . getParams $ func
 
     compNbNestedFor :: TInstr -> Integer
     compNbNestedFor (TIAssign _ _) = 0
@@ -136,6 +158,7 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
 
     nbNestedFor = compNbNestedFor (TIBegin instrs)
 
+    pointers = map fst . filter (isOut . snd) . getParams $ func
 
 genFichier :: TFichier -> Asm ()
 genFichier (TFichier _ decl instrs) =
@@ -182,6 +205,10 @@ genFunction lbls prev name func decl instrs = do
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (getSize decls)
 
+    ctypeSize :: CType -> Integer
+    ctypeSize (CType _ True _) = 8
+    ctypeSize (CType t _ _) = typedSize t
+
     getOffsets :: Map String Typed -> Map String Integer
     getOffsets vars = M.fromList $ zip (map fst varsList) sizes
       where
@@ -198,6 +225,7 @@ genFunction lbls prev name func decl instrs = do
             movq rbp rax
             replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
             leaq (Pointer rax (-off)) rax
+            when (isPointer decls id) $ movq (Pointer rax 0) rax
 
     genAccess (AccessPart e str) = do
         genExpr e
@@ -215,37 +243,46 @@ genFunction lbls prev name func decl instrs = do
 
     doFctCall :: String -> [TPExpr] -> Asm ()
     doFctCall s args = do
-        forM_ (reverse' args) (\e -> do
-            let t = ctypeToTyped . snd $ e
-            genExpr e
-            case t of
-                TInteger -> do
-                    subq (int 8) rsp
-                    movq rax (Pointer rsp 0)
-                TCharacter -> do
-                    subq (int 1) rsp
-                    movb al (Pointer rsp 0)
-                TBoolean -> do
-                    subq (int 1) rsp
-                    movb al (Pointer rsp 0)
-                TRecord i -> do
-                    let size = typedSize t
-                    subq size rsp
-                    bigCopy rax rsp size 0
-                TAccess _ -> do
-                    subq (int 8) rsp
-                    movq rax (Pointer rsp 0)
-                TypeNull -> do
-                    subq (int 8) rsp
-                    movq (int 0) (Pointer rsp 0)
+        let argsIsOut = (reverse' (zip args (map (isOut . snd) . getParams . findFunctionnal decls $ s)))
+        forM_  argsIsOut (\(e, out) ->
+            if out then
+                case fst e of
+                    TEAccess a -> do
+                        genAccess a
+                        subq (int 8) rsp
+                        movq rax (Pointer rsp 0)
+                    _ -> error "'out' argument is not an access!"
+            else do
+                let t = ctypeToTyped . snd $ e
+                genExpr e
+                case t of
+                    TInteger -> do
+                        subq (int 8) rsp
+                        movq rax (Pointer rsp 0)
+                    TCharacter -> do
+                        subq (int 1) rsp
+                        movb al (Pointer rsp 0)
+                    TBoolean -> do
+                        subq (int 1) rsp
+                        movb al (Pointer rsp 0)
+                    TRecord i -> do
+                        let size = typedSize t
+                        subq size rsp
+                        bigCopy rax rsp size 0
+                    TAccess _ -> do
+                        subq (int 8) rsp
+                        movq rax (Pointer rsp 0)
+                    TypeNull -> do
+                        subq (int 8) rsp
+                        movq (int 0) (Pointer rsp 0)
             )
         movq rbp rax
         unless (s `elem` ["print_int__", "new_line", "put", "free__"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
         pushq rax
         call (Label $ new_lbls ! s)
         popq rax
-        forM_ (reverse' args) (\e -> do
-            let size = typedSize . ctypeToTyped . snd $ e
+        forM_ argsIsOut (\(e, out) -> do
+            let size = if out then 8 else typedSize . ctypeToTyped . snd $ e
             addq size rsp
             )
 
