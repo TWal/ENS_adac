@@ -182,7 +182,7 @@ genFunction lbls prev name func decl instrs = do
     label (Label lbl)
     pushq rbp
     movq rsp rbp
-    subq fs rsp
+    when (fs /= 0) $ subq fs rsp
     forM_ (M.toList $ dvars decl) (\(s, (_, e)) ->
         maybe (return ()) (\e' -> genInstr (TIAssign (AccessFull (fromIntegral $ length decls, s)) e')) e
         )
@@ -217,30 +217,34 @@ genFunction lbls prev name func decl instrs = do
         varsList = M.toList vars
         sizes = scanl (+) 0 . map (typedSize . snd) $ varsList
 
-    genAccess :: TAccess -> Asm ()
+    genAccess :: TAccess -> Asm Memory
     genAccess (AccessFull id) =
         if fst id > (fromIntegral $ length decls) then do
             let d = snd . last $ decls
-            leaq (Pointer rbp (-((frameSize d) - 8*(nbNestedFor d) + 8*(fst id - (fromIntegral $ length decls))))) rax
+            return (Pointer rbp (-((frameSize d) - 8*(nbNestedFor d) + 8*(fst id - (fromIntegral $ length decls)))))
         else do
             let off = getOffset decls id
             movq rbp rax
             replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
-            leaq (Pointer rax (-off)) rax
-            when (isPointer decls id) $ movq (Pointer rax 0) rax
+            if isPointer decls id then do
+                movq (Pointer rax (-off)) rax
+                return (Pointer rax 0)
+            else do
+                return (Pointer rax (-off))
 
     genAccess (AccessPart e str) = do
         genExpr e
         case snd e of
             CType (TAccess (level,name)) _ _ ->
-                when (str /= "all") $
+                if (str /= "all") then
                     let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
                     let ofs = getOffsets rec in
-                    leaq (Pointer rax (ofs ! str)) rax
+                    return (Pointer rax (ofs ! str))
+                else return (Pointer rax 0)
             CType (TRecord (level, name)) _ _ ->
                 let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
                 let ofs = getOffsets rec in
-                leaq (Pointer rax (ofs ! str)) rax
+                return (Pointer rax (ofs ! str))
             _ -> error "MEH."
 
     doFctCall :: String -> [TPExpr] -> Asm ()
@@ -250,17 +254,16 @@ genFunction lbls prev name func decl instrs = do
             if out then
                 case fst e of
                     TEAccess a -> do
-                        genAccess a
-                        subq (int 8) rsp
-                        movq rax (Pointer rsp 0)
+                        ac <- genAccess a
+                        leaq ac rax
+                        pushq rax
                     _ -> error "'out' argument is not an access!"
             else do
                 let t = ctypeToTyped . snd $ e
                 genExpr e
                 case t of
                     TInteger -> do
-                        subq (int 8) rsp
-                        movq rax (Pointer rsp 0)
+                        pushq rax
                     TCharacter -> do
                         subq (int 1) rsp
                         movb al (Pointer rsp 0)
@@ -270,42 +273,43 @@ genFunction lbls prev name func decl instrs = do
                     TRecord i -> do
                         let size = typedSize t
                         subq size rsp
-                        bigCopy rax rsp size 0
+                        bigCopy (Pointer rax 0) (Pointer rsp 0) size
                     TAccess _ -> do
-                        subq (int 8) rsp
-                        movq rax (Pointer rsp 0)
+                        pushq rax
                     TypeNull -> do
-                        subq (int 8) rsp
-                        movq (int 0) (Pointer rsp 0)
+                        pushq (int 0)
             )
-        movq rbp rax
-        unless (s `elem` ["print_int__", "new_line", "put", "free__"]) $ maybe (return ()) (\lev -> replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)) (getFctLevel s)
-        pushq rax
+        if s `elem` ["print_int__", "new_line", "put", "free__"] then
+            pushq rbp
+        else
+            maybe (pushq rbp) (\lev -> do
+                movq rbp rax
+                replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)
+                pushq rax
+            ) (getFctLevel s)
         call (Label $ new_lbls ! s)
         popq rax
-        forM_ argsIsOut (\(e, out) -> do
-            let size = if out then 8 else typedSize . ctypeToTyped . snd $ e
-            addq size rsp
-            )
+        let toAdd = sum . map (\(e, out) -> if out then 8 else typedSize . ctypeToTyped . snd $ e) $ argsIsOut
+        when (toAdd /= 0) $ addq toAdd rsp
 
-    bigCopy :: Register -> Register -> Integer -> Integer -> Asm ()
-    bigCopy reg1 reg2 size off
+    bigCopy :: Memory -> Memory -> Integer -> Asm ()
+    bigCopy m1 m2 size
         | size >= 8 = do
-            movq (Pointer reg1 off) r11
-            movq r11 (Pointer reg2 off)
-            bigCopy reg1 reg2 (size-8) (off+8)
+            movq m1 r11
+            movq r11 m2
+            bigCopy (addOffset 8 m1) (addOffset 8 m2) (size-8)
         | size >= 4 = do
-            movl (Pointer reg1 off) r11d
-            movl r11d (Pointer reg2 off)
-            bigCopy reg1 reg2 (size-4) (off+4)
+            movl m1 r11d
+            movl r11d m2
+            bigCopy (addOffset 4 m1) (addOffset 4 m2) (size-4)
         | size >= 2 = do
-            movw (Pointer reg1 off) r11w
-            movw r11w (Pointer reg2 off)
-            bigCopy reg1 reg2 (size-2) (off+2)
+            movw m1 r11w
+            movw r11w m2
+            bigCopy (addOffset 2 m1) (addOffset 2 m2) (size-2)
         | size >= 1 = do
-            movb (Pointer reg1 off) r11b
-            movb r11b (Pointer reg2 off)
-            bigCopy reg1 reg2 (size-1) (off+1)
+            movb m1 r11b
+            movb r11b m2
+            bigCopy (addOffset 1 m1) (addOffset 1 m2) (size-1)
         | otherwise = do
             return ()
 
@@ -316,32 +320,32 @@ genFunction lbls prev name func decl instrs = do
         case ctypeToTyped . snd $ e of
             TInteger -> do
                 pushq rax
-                genAccess acc
+                memAcc <- genAccess acc
                 popq rbx
-                movq rbx (Pointer rax 0)
+                movq rbx memAcc
             TCharacter -> do
                 pushq rax
-                genAccess acc
+                memAcc <- genAccess acc
                 popq rbx
-                movb bl (Pointer rax 0)
+                movb bl memAcc
             TBoolean -> do
                 pushq rax
-                genAccess acc
+                memAcc <- genAccess acc
                 popq rbx
-                movb bl (Pointer rax 0)
+                movb bl memAcc
             TRecord i -> do
                 movq rax r10 -- r10 is not used anywhere else
-                genAccess acc
-                bigCopy r10 rax (getSize decls i) 0
+                memAcc <- genAccess acc
+                bigCopy (Pointer r10 0) memAcc (getSize decls i)
             TAccess _ -> do
                 pushq rax
-                genAccess acc
+                memAcc <- genAccess acc
                 popq rbx
-                movq rbx (Pointer rax 0)
+                movq rbx memAcc
             TypeNull -> do
                 -- Small optimisation : genExpr only wrote 0 to rax
-                genAccess acc
-                movq (int 0) (Pointer rax 0)
+                memAcc <- genAccess acc
+                movq (int 0) memAcc
 
     genInstr (TIIdent s) = do
         doFctCall s []
@@ -350,7 +354,7 @@ genFunction lbls prev name func decl instrs = do
         doFctCall s (foldr (:) [] args)
 
     genInstr (TIReturn Nothing) = do
-        addq fs rsp
+        when (fs /= 0) $ addq fs rsp
         popq rbp
         movq (int 0) rax
         ret
@@ -366,8 +370,7 @@ genFunction lbls prev name func decl instrs = do
             TBoolean -> do
                 movb al (Pointer rbp off)
             TRecord i -> do
-                leaq (Pointer rbp off) rbx
-                bigCopy rax rbx (getSize decls i) 0
+                bigCopy (Pointer rax 0) (Pointer rbp off) (getSize decls i)
             TAccess _ -> do
                 movq rax (Pointer rbp off)
             TypeNull -> do
@@ -399,9 +402,9 @@ genFunction lbls prev name func decl instrs = do
         if rev then genExpr to
         else genExpr from
         pushq rax
-        genAccess (AccessFull id)
+        memId <- genAccess (AccessFull id)
         popq rbx
-        movq rbx (Pointer rax 0)
+        movq rbx memId
         if rev then genExpr from
         else genExpr to
         pushq rax
@@ -410,14 +413,14 @@ genFunction lbls prev name func decl instrs = do
         jmp condLabel
         label bodyLabel
         mapM_ genInstr instrs
-        genAccess (AccessFull id)
-        movq (Pointer rax 0) rbx
+        memId <- genAccess (AccessFull id)
+        movq memId rbx
         if rev then decq rbx
         else incq rbx
-        movq rbx (Pointer rax 0)
+        movq rbx memId
         label condLabel
-        genAccess (AccessFull id)
-        movq (Pointer rax 0) rax
+        memId <- genAccess (AccessFull id)
+        movq memId rax
         popq rbx
         pushq rbx
         cmpq rax rbx
@@ -456,18 +459,18 @@ genFunction lbls prev name func decl instrs = do
         movq (int 0) rax
 
     genExpr (TEAccess a, (CType t _ _)) = do
-        genAccess a
+        memAcc <- genAccess a
         case t of
             TInteger -> do
-                movq (Pointer rax 0) rax
+                movq memAcc rax
             TCharacter -> do
-                movzbq (Pointer rax 0) rax
+                movzbq memAcc rax
             TBoolean -> do
-                movzbq (Pointer rax 0) rax
+                movzbq memAcc rax
             TRecord i -> do
-                return ()
+                leaq memAcc rax
             TAccess _ -> do
-                movq (Pointer rax 0) rax
+                movq memAcc rax
             TypeNull -> do -- Shouldn't happen
                 movq (int 0) rax
 
