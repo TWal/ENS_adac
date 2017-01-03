@@ -178,6 +178,7 @@ genFichier (TFichier _ decl instrs) =
 -- function
 genFunction :: Map String String -> [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
 genFunction lbls prev name func decl instrs = do
+    pushLabelName name
     label (Label lbl)
     pushq rbp
     movq rsp rbp
@@ -189,6 +190,7 @@ genFunction lbls prev name func decl instrs = do
     movq (int 0) rax
     genInstr (TIReturn Nothing)
     mapM_ (\(s, f) -> uncurry3 (genFunction new_lbls decls s) f) (M.toList $ dfuns decl)
+    popLabelName
 
   where
     lbl = lbls ! name
@@ -377,9 +379,10 @@ genFunction lbls prev name func decl instrs = do
         mapM_ genInstr le
 
     genInstr (TIIf lci eci) = do
-        endLabel <- getLabel
+        pushLabelName "if"
+        endLabel <- getLabel "endCond"
         forM_ lci (\(cond, instrs) -> do
-            nextLabel <- getLabel
+            nextLabel <- getLabel "nextCond"
             genExpr cond
             testq rax rax
             jz nextLabel
@@ -389,8 +392,10 @@ genFunction lbls prev name func decl instrs = do
             )
         forM_ eci (mapM_ genInstr)
         label endLabel
+        popLabelName
 
     genInstr (TIFor id rev from to instrs) = do
+        pushLabelName "for"
         if rev then genExpr to
         else genExpr from
         pushq rax
@@ -400,8 +405,8 @@ genFunction lbls prev name func decl instrs = do
         if rev then genExpr from
         else genExpr to
         pushq rax
-        bodyLabel <- getLabel
-        condLabel <- getLabel
+        bodyLabel <- getLabel "body"
+        condLabel <- getLabel "condition"
         jmp condLabel
         label bodyLabel
         mapM_ genInstr instrs
@@ -419,11 +424,13 @@ genFunction lbls prev name func decl instrs = do
         if rev then jle bodyLabel
         else jge bodyLabel
         popq rbx
+        popLabelName
 
 
     genInstr (TIWhile cond instrs) = do
-        bodyLabel <- getLabel
-        condLabel <- getLabel
+        pushLabelName "while"
+        bodyLabel <- getLabel "body"
+        condLabel <- getLabel "condition"
         jmp condLabel
         label bodyLabel
         mapM_ genInstr instrs
@@ -431,6 +438,7 @@ genFunction lbls prev name func decl instrs = do
         genExpr cond
         testq rax rax
         jnz bodyLabel
+        popLabelName
 
 
     genExpr :: TPExpr -> Asm ()
@@ -469,8 +477,8 @@ genFunction lbls prev name func decl instrs = do
             Equal -> case ctypeToTyped . snd $ e1 of
                 TRecord i -> do
                     evalBothExpr
-                    falseLab <- getLabel
-                    endLab <- getLabel
+                    falseLab <- getLabel "receqFalse"
+                    endLab <- getLabel "receqEnd"
                     bigCond rax rbx (getSize decls i) 0 falseLab
                     movq (int 1) rax
                     jmp endLab
@@ -509,7 +517,7 @@ genFunction lbls prev name func decl instrs = do
             AndThen -> do
                 genExpr e1
                 testb al al
-                lbl <- getLabel
+                lbl <- getLabel "andthen"
                 je lbl
                 genExpr e2
                 label lbl
@@ -519,7 +527,7 @@ genFunction lbls prev name func decl instrs = do
             OrElse -> do
                 genExpr e1
                 testb al al
-                lbl <- getLabel
+                lbl <- getLabel "orelse"
                 jne lbl
                 genExpr e2
                 label lbl

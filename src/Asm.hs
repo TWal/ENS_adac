@@ -1,6 +1,6 @@
 module Asm (
     Register, Label(..), Memory(..), Star, RValue(..), LValue, Jmpable(..), Asm,
-    getLabel, getAssembly, star, int,
+    getLabel, pushLabelName, popLabelName, getAssembly, star, int,
     rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, r8, r9, r10, r11, r12, r13, r14, r15,
     eax, ebx, ecx, edx, esi, edi, ebp, esp, r8d, r9d, r10d, r11d, r12d, r13d, r14d, r15d,
     ax , bx , cx , dx , si , di , bp , sp , r8w, r9w, r10w, r11w, r12w, r13w, r14w, r15w,
@@ -20,6 +20,7 @@ module Asm (
 ) where
 
 import Data.Char (toLower)
+import Data.List (intercalate)
 import qualified Control.Monad.Trans.State.Strict as S
 
 data Register =
@@ -67,13 +68,28 @@ instance Jmpable Label where
 instance (RValue a) => Jmpable (Star a) where
     labToStr (Star x) = "*(" ++ arg x ++ ")"
 
-type Asm = S.StateT (String, Integer) (Either ())
+type Asm = S.StateT (String, ([String], Integer)) (Either ())
 
 addCode :: String -> Asm ()
-addCode s = S.state $ \(str, i) -> ((), (str ++ s ++ "\n", i))
+addCode s = do
+    (code, labs) <- S.get
+    S.put (code ++ s ++ "\n", labs)
 
-getLabel :: Asm Label
-getLabel = S.state $ \(str, i) -> (Label $ "label" ++ show i, (str, i+1))
+getLabel :: String -> Asm Label
+getLabel name = do
+    (code, (labNames, i)) <- S.get
+    S.put (code, (labNames, i+1))
+    return . Label $ "_label_" ++ (intercalate "_" . reverse . (show i:) . (name:) $ labNames)
+
+pushLabelName :: String -> Asm ()
+pushLabelName s = do
+    (code, (labNames, i)) <- S.get
+    S.put (code, (s:labNames, i))
+
+popLabelName :: Asm ()
+popLabelName = do
+    (code, (_:labNames, i)) <- S.get
+    S.put (code, (labNames, i))
 
 beginSource :: String
 beginSource =
@@ -106,7 +122,7 @@ endSource =
 
 
 getAssembly :: Asm a -> String
-getAssembly = (++ endSource) . (beginSource ++) . fst . fromRight . flip S.execStateT ("", 0)
+getAssembly = (++ endSource) . (beginSource ++) . fst . fromRight . flip S.execStateT ("", ([], 0))
  where fromRight (Right x) = x
 
 -- Helper functions
