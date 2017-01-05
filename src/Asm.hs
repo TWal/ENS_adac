@@ -72,12 +72,21 @@ instance Jmpable Label where
 instance (RValue a) => Jmpable (Star a) where
     labToStr (Star x) = "*(" ++ arg x ++ ")"
 
-type Asm = S.StateT (String, ([String], Integer)) (Either ())
+data Rope = RLeaf String | RNode Rope Rope
+
+ropeToString :: Rope -> String
+ropeToString s = prepend s ""
+  where
+    prepend :: Rope -> String -> String
+    prepend (RLeaf s) res = s ++ res
+    prepend (RNode r1 r2) res = prepend r1 (prepend r2 res)
+
+type Asm = S.StateT (Rope, ([String], Integer)) (Either ())
 
 addCode :: String -> Asm ()
 addCode s = do
     (code, labs) <- S.get
-    S.put (code ++ s ++ "\n", labs)
+    S.put (RNode code (RLeaf (s ++ "\n")), labs)
 
 getLabel :: String -> Asm Label
 getLabel name = do
@@ -126,7 +135,7 @@ endSource =
 
 
 getAssembly :: Asm a -> String
-getAssembly = (++ endSource) . (beginSource ++) . fst . fromRight . flip S.execStateT ("", ([], 0))
+getAssembly = ropeToString . flip RNode (RLeaf endSource) . RNode (RLeaf beginSource) . fst . fromRight . flip S.execStateT (RLeaf "", ([], 0))
  where fromRight (Right x) = x
 
 -- Helper functions
