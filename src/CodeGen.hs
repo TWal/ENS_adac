@@ -7,9 +7,8 @@ import Control.Monad
 import Control.Monad.Trans.State.Strict
 import           Data.Map      (Map, (!))
 import qualified Data.Map      as M
-import Data.List (elemIndex)
+import Data.List (findIndex)
 import Data.Maybe (maybe)
-import Debug.Trace
 
 data DeclSizes = DeclSizes
     { tsizes :: Map String Integer
@@ -202,7 +201,7 @@ genFunction lbls prev name func decl instrs = do
     decls = prev ++ [(decl, mkDeclSizes prev func name instrs decl)]
 
     getFctLevel :: String -> Maybe Int
-    getFctLevel = flip elemIndex (map (fctName . snd) decls)
+    getFctLevel name = findIndex (elem name) . map (map fst . M.toList . dfuns . fst) $ decls
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (getSize decls)
@@ -284,7 +283,7 @@ genFunction lbls prev name func decl instrs = do
         else
             maybe (pushq rbp) (\lev -> do
                 movq rbp rax
-                replicateM_ (length decls - lev) (movq (Pointer rax 16) rax)
+                replicateM_ (length decls - lev - 1) (movq (Pointer rax 16) rax)
                 pushq rax
             ) (getFctLevel s)
         call (Label $ new_lbls ! s)
