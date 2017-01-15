@@ -4,38 +4,38 @@ import Asm
 import AST
 import Data.Char (ord)
 import Control.Monad
-import Control.Monad.Trans.State.Strict
-import           Data.Map      (Map, (!))
-import qualified Data.Map      as M
+import Control.Monad.State
+import Data.Map (Map, (!))
+import qualified Data.Map as M
 import Data.List (findIndex)
-import Data.Maybe (maybe)
+import Data.Maybe (maybe, fromMaybe)
 
-data DeclSizes = DeclSizes
-    { tsizes :: Map String Integer
-    , voffs  :: Map String Integer
-    , frameSize :: Integer
-    , argsSize :: Integer
-    , fctName :: String
-    , nbNestedFor :: Integer
-    , pointers :: [String]
+data DeclInfos = DeclInfos
+    { tsizes :: Map String Integer -- size of different types on this level
+    , voffs  :: Map String Integer -- offsets of local variables on the stack
+    , frameSize :: Integer -- size of the frame
+    , argsSize :: Integer -- size of the arguments
+    , fctName :: String -- name of the function
+    , nbNestedFor :: Integer -- number of nested for
+    , pointers :: [String] -- out parameters
     }
 
-getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
+getSize :: [(TDecls, DeclInfos)] -> TId -> Integer
 -- TODO handle better level-0 declarations
 getSize decls (0, name) = if name == "integer" then 4 else 1
 getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral (level-1)) ! name
 
-getOffset :: [(TDecls, DeclSizes)] -> TId -> Integer
+getOffset :: [(TDecls, DeclInfos)] -> TId -> Integer
 getOffset decls (level, name) = voffs (snd $ decls !! fromIntegral (level-1)) ! name
 
-isPointer :: [(TDecls, DeclSizes)] -> TId -> Bool
-isPointer decls (level, name) = name `elem` (pointers (snd $ decls !! fromIntegral (level-1)))
+isPointer :: [(TDecls, DeclInfos)] -> TId -> Bool
+isPointer decls (level, name) = name `elem` pointers (snd $ decls !! fromIntegral (level-1))
 
-findFunctionnal :: [(TDecls, DeclSizes)] -> String -> Functionnal
+findFunctionnal :: [(TDecls, DeclInfos)] -> String -> Functionnal
 findFunctionnal decls s =
-    aux . reverse $ (level0 : (map ((M.map fst3) . dfuns . fst) decls))
+    aux . reverse $ level0 : map (M.map fst3 . dfuns . fst) decls
   where
-    aux (h:t) = maybe (aux t) id (M.lookup s h)
+    aux (h:t) = fromMaybe (aux t) (M.lookup s h)
     fst3 (x, _, _) = x
     level0 = M.fromList
               [ ("put", TProcedure $ TParams [("o", CType TCharacter False True)])
@@ -61,15 +61,6 @@ ctypeToTyped (CType t _ _) = t
 isOut :: CType -> Bool
 isOut (CType _ b _) = b
 
-isRecord :: Typed -> Bool
-isRecord (TRecord _) = True
-isRecord _ = False
-
-isRecOrAccess :: Typed -> Bool
-isRecOrAccess (TAccess _) = True
-isRecOrAccess (TRecord _) = True
-isRecOrAccess _ = False
-
 getParams :: Functionnal -> [(String, CType)]
 getParams (TFunction (TParams p) _) = p
 getParams (TProcedure (TParams p)) = p
@@ -80,11 +71,11 @@ reverse' = foldl (flip (:)) []
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (a, b, c) = f a b c
 
-type St = StateT (Map String Integer) (Either ())
-mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> NonEmptyList TInstr -> TDecls -> DeclSizes
-mkDeclSizes prev func funcname instrs decls = DeclSizes
+type St = State (Map String Integer)
+mkDeclInfos :: [(TDecls, DeclInfos)] -> Functionnal -> String -> NonEmptyList TInstr -> TDecls -> DeclInfos
+mkDeclInfos prev func funcname instrs decls = DeclInfos
     { tsizes = recordedSize
-    , voffs = (\(x,_,_) -> x)  offsets
+    , voffs = (\(x,_,_) -> x) offsets
     , frameSize = (\(_,x,_) -> x) offsets + 4*nbNestedFor
     , argsSize = (\(_,_,x) -> x) offsets
     , fctName = funcname
@@ -93,10 +84,12 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
     }
   where
     addMemo :: String -> Integer -> St ()
-    addMemo str size = state $ \map -> ((), M.insert str size map)
+    addMemo str size = modify (M.insert str size)
 
     getMemo :: String -> St (Maybe Integer)
-    getMemo str = state $ \map -> (M.lookup str map, map)
+    getMemo str = do
+        map <- get
+        return $ M.lookup str map
 
     getRecordedSize :: TId -> St Integer
     getRecordedSize (level, name) =
@@ -126,21 +119,20 @@ mkDeclSizes prev func funcname instrs decls = DeclSizes
     getTypedSize t = getTypedSize' t return getRecordedSize
 
     recordedSize :: Map String Integer
-    recordedSize = fromRight $ execStateT (mapM_ getRecordedSize (zip (repeat (fromIntegral $ length prev)) (M.keys (dtypes decls)))) M.empty
-
-    fromRight (Right x) = x
+    recordedSize = execState (mapM_ getRecordedSize (zip (repeat (fromIntegral $ length prev)) (M.keys (dtypes decls)))) M.empty
 
     typedSize :: Typed -> Integer
     typedSize t = getTypedSize' t id (\(level, name) ->
         if fromIntegral level <= length prev then getSize prev (level, name)
-        else recordedSize ! name)
+        else recordedSize ! name
+     )
 
     compOffsets :: Bool -> (CType -> Integer) -> [(String, CType)] -> ([(String, Integer)], Integer)
     compOffsets doTail getSize list = (zip (map fst list) ((if doTail then tail else id) sizes), last sizes)
       where sizes = scanl (+) 0 . map (getSize . snd) $ list
 
     offsets :: (Map String Integer, Integer, Integer)
-    offsets = (M.fromList $ (fst varOffs) ++ (map (\(s, i) -> (s, -i-24)) . fst $ argsOffs), snd varOffs, snd argsOffs)
+    offsets = (M.fromList $ fst varOffs ++ (map (\(s, i) -> (s, -i-24)) . fst $ argsOffs), snd varOffs, snd argsOffs)
       where
         varOffs = compOffsets True (typedSize . ctypeToTyped) . map (\(s, (t, _)) -> (s, t)) . M.toList . dvars $ decls
         argsOffs = compOffsets False (\t -> if isOut t then 8 else typedSize . ctypeToTyped $ t) . getParams $ func
@@ -175,30 +167,30 @@ genFichier (TFichier _ decl instrs) =
 -- 
 -- functions labels are of the form main.fn1.fn2 if fn1 is a subfunction of fn1, which is a toplevel
 -- function
-genFunction :: Map String String -> [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
-genFunction lbls prev name func thedecl instrs = do
+genFunction :: Map String String -> [(TDecls, DeclInfos)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
+genFunction labels prev name func thedecl instrs = do
     pushLabelName name
-    label (Label lbl)
+    label (Label lab)
     pushq rbp
     movq rsp rbp
     when (fs /= 0) $ subq fs rsp
     forM_ (M.toList $ dvars thedecl) (\(s, (_, e)) ->
-        maybe (return ()) (\e' -> genInstr (TIAssign (AccessFull (fromIntegral $ length decls, s)) e')) e
+        maybe (return ()) (genInstr . TIAssign (AccessFull (fromIntegral $ length decls, s))) e
         )
     mapM_ genInstr instrs
     movq (int 0) rax
     genInstr (TIReturn Nothing)
-    mapM_ (\(s, f) -> uncurry3 (genFunction new_lbls decls s) f) (M.toList $ dfuns thedecl)
+    mapM_ (\(s, f) -> uncurry3 (genFunction new_labels decls s) f) (M.toList $ dfuns thedecl)
     popLabelName
 
   where
-    lbl = lbls ! name
-    new_lbls = foldl (\m -> \s -> M.insert s (lbl ++ "." ++ s) m) lbls
+    lab = labels ! name
+    new_labels = foldl (\m s -> M.insert s (lab ++ "." ++ s) m) labels
              $ map fst $ M.toList $ dfuns thedecl
 
     fs = frameSize . snd . last $ decls
-    decls :: [(TDecls, DeclSizes)]
-    decls = prev ++ [(thedecl, mkDeclSizes prev func name instrs thedecl)]
+    decls :: [(TDecls, DeclInfos)]
+    decls = prev ++ [(thedecl, mkDeclInfos prev func name instrs thedecl)]
 
     getFctLevel :: String -> Maybe Int
     getFctLevel name = findIndex (elem name) . map (map fst . M.toList . dfuns . fst) $ decls
@@ -210,32 +202,37 @@ genFunction lbls prev name func thedecl instrs = do
     ctypeSize (CType _ True _) = 8
     ctypeSize (CType t _ _) = typedSize t
 
+    -- Used with records. Maybe we should precompute this but this does not impact the performances a lot
     getOffsets :: Map String Typed -> Map String Integer
     getOffsets vars = M.fromList $ zip (map fst varsList) sizes
       where
         varsList = M.toList vars
         sizes = scanl (+) 0 . map (typedSize . snd) $ varsList
 
+    -- Return the memory address of the access
+    -- /!\ may use the rax register
     genAccess :: TAccess -> Asm Memory
     genAccess (AccessFull id) =
-        if fst id > (fromIntegral $ length decls) then do
+        -- If it is a variable in a for loop
+        if fst id > fromIntegral (length decls) then do
             let d = snd . last $ decls
-            return (Pointer rbp (-((frameSize d) - 4*(nbNestedFor d) + 4*(fst id - (fromIntegral $ length decls)))))
+            return (Pointer rbp (-(frameSize d - 4 * nbNestedFor d + 4*(fst id - fromIntegral (length decls)))))
+        -- otherwise
         else do
             let off = getOffset decls id
             movq rbp rax
-            replicateM_ (length decls - (fromIntegral $ fst id)) (movq (Pointer rax 16) rax)
+            replicateM_ (length decls - fromIntegral (fst id)) (movq (Pointer rax 16) rax)
             if isPointer decls id then do
                 movq (Pointer rax (-off)) rax
                 return (Pointer rax 0)
-            else do
+            else
                 return (Pointer rax (-off))
 
     genAccess (AccessPart e str) = do
         genExpr e
         case snd e of
             CType (TAccess (level,name)) _ _ ->
-                if (str /= "all") then
+                if str /= "all" then
                     let (Record rec) = dtypes (fst $ decls !! fromIntegral (level-1)) ! name in
                     let ofs = getOffsets rec in
                     return (Pointer rax (ofs ! str))
@@ -248,7 +245,7 @@ genFunction lbls prev name func thedecl instrs = do
 
     doFctCall :: String -> [TPExpr] -> Asm ()
     doFctCall s args = do
-        let argsIsOut = (reverse' (zip args (map (isOut . snd) . getParams . findFunctionnal decls $ s)))
+        let argsIsOut = reverse' (zip args (map (isOut . snd) . getParams . findFunctionnal decls $ s))
         forM_  argsIsOut (\(e, out) ->
             if out then
                 case fst e of
@@ -274,9 +271,9 @@ genFunction lbls prev name func thedecl instrs = do
                         let size = typedSize t
                         subq size rsp
                         bigCopy (Pointer rax 0) (Pointer rsp 0) size
-                    TAccess _ -> do
+                    TAccess _ ->
                         pushq rax
-                    TypeNull -> do
+                    TypeNull ->
                         pushq (int 0)
             )
         if s `elem` ["print_int__", "new_line", "put", "free__"] then
@@ -287,7 +284,7 @@ genFunction lbls prev name func thedecl instrs = do
                 replicateM_ (length decls - lev - 1) (movq (Pointer rax 16) rax)
                 pushq rax
             ) (getFctLevel s)
-        call (Label $ new_lbls ! s)
+        call (Label $ new_labels ! s)
         popq rax
         let toAdd = sum . map (\(e, out) -> if out then 8 else typedSize . ctypeToTyped . snd $ e) $ argsIsOut
         when (toAdd /= 0) $ addq toAdd rsp
@@ -310,7 +307,7 @@ genFunction lbls prev name func thedecl instrs = do
             movb m1 r11b
             movb r11b m2
             bigCopy (addOffset 1 m1) (addOffset 1 m2) (size-1)
-        | otherwise = do
+        | otherwise =
             return ()
 
     genInstr :: TInstr -> Asm ()
@@ -347,10 +344,10 @@ genFunction lbls prev name func thedecl instrs = do
                 memAcc <- genAccess acc
                 movq (int 0) memAcc
 
-    genInstr (TIIdent s) = do
+    genInstr (TIIdent s) =
         doFctCall s []
 
-    genInstr (TICall s args) = do
+    genInstr (TICall s args) =
         doFctCall s (foldr (:) [] args)
 
     genInstr (TIReturn Nothing) = do
@@ -363,22 +360,22 @@ genFunction lbls prev name func thedecl instrs = do
         genExpr e
         let off = (+24) . argsSize . snd . last $ decls
         case ctypeToTyped . snd $ e of
-            TInteger -> do
+            TInteger ->
                 movl eax (Pointer rbp off)
-            TCharacter -> do
+            TCharacter ->
                 movb al (Pointer rbp off)
-            TBoolean -> do
+            TBoolean ->
                 movb al (Pointer rbp off)
-            TRecord i -> do
+            TRecord i ->
                 bigCopy (Pointer rax 0) (Pointer rbp off) (getSize decls i)
-            TAccess _ -> do
+            TAccess _ ->
                 movq rax (Pointer rbp off)
-            TypeNull -> do
+            TypeNull ->
                 movq (int 0) (Pointer rbp off)
         genInstr (TIReturn Nothing)
 
     -- It's useful only for the typer to shadow names
-    genInstr (TIBegin le) = do
+    genInstr (TIBegin le) =
         mapM_ genInstr le
 
     genInstr (TIIf lci eci) = do
@@ -446,32 +443,32 @@ genFunction lbls prev name func thedecl instrs = do
 
     genExpr :: TPExpr -> Asm ()
 
-    genExpr (TEInt i, _) = do
+    genExpr (TEInt i, _) =
         movl i eax
 
-    genExpr (TEChar c, _) = do
+    genExpr (TEChar c, _) =
         movq (int . ord $ c) rax
 
-    genExpr (TEBool b, _) = do
-        movq (int $ (if b then 1 else 0)) rax
+    genExpr (TEBool b, _) =
+        movq (int $ if b then 1 else 0) rax
 
-    genExpr (TENull, _) = do
+    genExpr (TENull, _) =
         movq (int 0) rax
 
-    genExpr (TEAccess a, (CType t _ _)) = do
+    genExpr (TEAccess a, CType t _ _) = do
         memAcc <- genAccess a
         case t of
-            TInteger -> do
+            TInteger ->
                 movl memAcc eax
-            TCharacter -> do
+            TCharacter ->
                 movzbq memAcc rax
-            TBoolean -> do
+            TBoolean ->
                 movzbq memAcc rax
-            TRecord i -> do
+            TRecord i ->
                 leaq memAcc rax
-            TAccess _ -> do
+            TAccess _ ->
                 movq memAcc rax
-            TypeNull -> do -- Shouldn't happen
+            TypeNull -> -- Shouldn't happen
                 movq (int 0) rax
 
 
@@ -505,11 +502,11 @@ genFunction lbls prev name func thedecl instrs = do
             Multiply -> do
                 evalBothExpr
                 imull ebx eax
-            Divide -> do -- TODO : int 8 -> 4
+            Divide -> do
                 evalBothExpr
                 cltd
                 idivl ebx
-            Rem -> do -- Idem
+            Rem -> do
                 evalBothExpr
                 cltd
                 idivl ebx
@@ -520,21 +517,21 @@ genFunction lbls prev name func thedecl instrs = do
             AndThen -> do
                 genExpr e1
                 testb al al
-                lbl <- getLabel "andthen"
-                je lbl
+                lab <- getLabel "andthen"
+                je lab
                 genExpr e2
-                label lbl
+                label lab
             Or -> do
                 evalBothExpr
                 orq rbx rax
             OrElse -> do
                 genExpr e1
                 testb al al
-                lbl <- getLabel "orelse"
-                jne lbl
+                lab <- getLabel "orelse"
+                jne lab
                 genExpr e2
-                label lbl
-        where
+                label lab
+      where
         evalBothExpr :: Asm ()
         evalBothExpr = do
             genExpr e2
@@ -569,15 +566,15 @@ genFunction lbls prev name func thedecl instrs = do
                 cmpb r11b (Pointer reg2 off)
                 jnz falseLab
                 bigCond reg1 reg2 (size-1) (off+1) falseLab
-            | otherwise = do
+            | otherwise =
                 return ()
 
     genExpr (TEUnop op e, _) = do
         genExpr e
         case op of
-            Not -> do
+            Not ->
                 xorq (int 1) rax
-            Negate -> do
+            Negate ->
                 negl eax
 
     genExpr (TENew s, _) = do
@@ -603,7 +600,5 @@ genFunction lbls prev name func thedecl instrs = do
                 movq (int 0) rax
         addq (typedSize t) rsp
 
-
-
-    genExpr (TECharval e, _) = do
+    genExpr (TECharval e, _) =
         genExpr e

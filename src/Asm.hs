@@ -21,7 +21,7 @@ module Asm (
 
 import Data.Char (toLower)
 import Data.List (intercalate)
-import qualified Control.Monad.Trans.State.Strict as S
+import Control.Monad.State
 
 data Register =
     Rax | Rbx | Rcx | Rdx | Rsi | Rdi | Rbp | Rsp | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15
@@ -81,28 +81,28 @@ ropeToString s = prepend s ""
     prepend (RLeaf s) res = s ++ res
     prepend (RNode r1 r2) res = prepend r1 (prepend r2 res)
 
-type Asm = S.StateT (Rope, ([String], Integer)) (Either ())
+type Asm = State (Rope, ([String], Integer))
 
 addCode :: String -> Asm ()
 addCode s = do
-    (code, labs) <- S.get
-    S.put (RNode code (RLeaf (s ++ "\n")), labs)
+    (code, labs) <- get
+    put (RNode code (RNode (RLeaf s) (RLeaf "\n")), labs)
 
 getLabel :: String -> Asm Label
 getLabel name = do
-    (code, (labNames, i)) <- S.get
-    S.put (code, (labNames, i+1))
+    (code, (labNames, i)) <- get
+    put (code, (labNames, i+1))
     return . Label $ "_label_" ++ (intercalate "_" . reverse . (show i:) . (name:) $ labNames)
 
 pushLabelName :: String -> Asm ()
 pushLabelName s = do
-    (code, (labNames, i)) <- S.get
-    S.put (code, (s:labNames, i))
+    (code, (labNames, i)) <- get
+    put (code, (s:labNames, i))
 
 popLabelName :: Asm ()
 popLabelName = do
-    (code, (_:labNames, i)) <- S.get
-    S.put (code, (labNames, i))
+    (code, (_:labNames, i)) <- get
+    put (code, (labNames, i))
 
 beginSource :: String
 beginSource =
@@ -135,8 +135,7 @@ endSource =
 
 
 getAssembly :: Asm a -> String
-getAssembly = ropeToString . flip RNode (RLeaf endSource) . RNode (RLeaf beginSource) . fst . fromRight . flip S.execStateT (RLeaf "", ([], 0))
- where fromRight (Right x) = x
+getAssembly = ropeToString . flip RNode (RLeaf endSource) . RNode (RLeaf beginSource) . fst . flip execState (RLeaf "", ([], 0))
 
 -- Helper functions
 ins0 :: String -> Asm ()
