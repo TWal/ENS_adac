@@ -18,6 +18,18 @@ qu'il soit stocké dans %rax. Si le type de l'expression est un record, alors
 Pour la valeur renvoyée par les fonctions, on a décidé de la stocker sur la pile :
 on réserve un emplacement pour elle à l'appel de la fonction.
 
+Le passage d'argument se fait sur la pile, avec, lors d'un appel, une pile de la
+forme :
+```
+argument n
+...
+argument 1
+%rbp father
+return address
+%rbp of caller
+local variables...
+```
+
 Le compilateur accepte un flag --O-1 qui permet de dé-optimiser le code, si on
 trouve que le code généré est trop rapide.
 
