@@ -190,7 +190,8 @@ for f in exec/*.adb; do
     rm -f $asm
     expected=exec/`basename $f .adb`.out
     max=`expr $max + 1`;
-    if compile $f; then
+    #if compile $f; then
+    if ../dist/build/adac/adac $f; then
 	rm -f out
 	score_comp=`expr $score_comp + 1`;
 	if gcc $asm && ./a.out > out; then
@@ -220,7 +221,7 @@ for f in exec-fail/*.adb; do
     asm=exec-fail/`basename $f .adb`.s
     rm -f $asm
     max=`expr $max + 1`;
-    if compile $f && gcc $asm; then
+    if ../dist/build/adac/adac $f && gcc $asm; then
 	score_comp=`expr $score_comp + 1`;
 	if ./a.out > out; then
 	    echo

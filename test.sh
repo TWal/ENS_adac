@@ -12,11 +12,11 @@ max=0
 
 for f in mytests/*.adb; do
     echo -n "."
-    asm=/tmp/toto.s
+    asm=mytests/`basename $f .adb`.s
     rm -f $asm
     expected=mytests/`basename $f .adb`.out
     max=`expr $max + 1`;
-    if ./dist/build/adac/adac --full $f > $asm; then
+    if ./dist/build/adac/adac $f; then
         rm -f /tmp/out
         score_comp=`expr $score_comp + 1`;
         if gcc $asm -o /tmp/toto && /tmp/toto > /tmp/out; then
