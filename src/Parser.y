@@ -71,8 +71,8 @@ import AST
 %nonassoc '=' '/='
 %nonassoc '>' '>=' '<' '<='
 %left '+' '-'
-%left '*' '/'  rem
 %nonassoc NEG
+%left '*' '/'  rem
 %left '.'
 
 %%

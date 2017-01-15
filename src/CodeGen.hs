@@ -22,7 +22,7 @@ data DeclSizes = DeclSizes
 
 getSize :: [(TDecls, DeclSizes)] -> TId -> Integer
 -- TODO handle better level-0 declarations
-getSize decls (0, name) = if name == "integer" then 8 else 1
+getSize decls (0, name) = if name == "integer" then 4 else 1
 getSize decls (level, name) = tsizes (snd $ decls !! fromIntegral (level-1)) ! name
 
 getOffset :: [(TDecls, DeclSizes)] -> TId -> Integer
@@ -48,7 +48,7 @@ findFunctionnal decls s =
 getTypedSize' :: Typed -> (Integer -> a) -> (TId -> a) -> a
 getTypedSize' t f g =
     case t of
-        TInteger -> f 8
+        TInteger -> f 4
         TCharacter -> f 1
         TBoolean -> f 1
         TRecord i -> g i
@@ -85,7 +85,7 @@ mkDeclSizes :: [(TDecls, DeclSizes)] -> Functionnal -> String -> NonEmptyList TI
 mkDeclSizes prev func funcname instrs decls = DeclSizes
     { tsizes = recordedSize
     , voffs = (\(x,_,_) -> x)  offsets
-    , frameSize = (\(_,x,_) -> x) offsets + 8*nbNestedFor
+    , frameSize = (\(_,x,_) -> x) offsets + 4*nbNestedFor
     , argsSize = (\(_,_,x) -> x) offsets
     , fctName = funcname
     , nbNestedFor = nbNestedFor
@@ -176,29 +176,29 @@ genFichier (TFichier _ decl instrs) =
 -- functions labels are of the form main.fn1.fn2 if fn1 is a subfunction of fn1, which is a toplevel
 -- function
 genFunction :: Map String String -> [(TDecls, DeclSizes)] -> String -> Functionnal -> TDecls -> NonEmptyList TInstr -> Asm ()
-genFunction lbls prev name func decl instrs = do
+genFunction lbls prev name func thedecl instrs = do
     pushLabelName name
     label (Label lbl)
     pushq rbp
     movq rsp rbp
     when (fs /= 0) $ subq fs rsp
-    forM_ (M.toList $ dvars decl) (\(s, (_, e)) ->
+    forM_ (M.toList $ dvars thedecl) (\(s, (_, e)) ->
         maybe (return ()) (\e' -> genInstr (TIAssign (AccessFull (fromIntegral $ length decls, s)) e')) e
         )
     mapM_ genInstr instrs
     movq (int 0) rax
     genInstr (TIReturn Nothing)
-    mapM_ (\(s, f) -> uncurry3 (genFunction new_lbls decls s) f) (M.toList $ dfuns decl)
+    mapM_ (\(s, f) -> uncurry3 (genFunction new_lbls decls s) f) (M.toList $ dfuns thedecl)
     popLabelName
 
   where
     lbl = lbls ! name
     new_lbls = foldl (\m -> \s -> M.insert s (lbl ++ "." ++ s) m) lbls
-             $ map fst $ M.toList $ dfuns decl
+             $ map fst $ M.toList $ dfuns thedecl
 
     fs = frameSize . snd . last $ decls
     decls :: [(TDecls, DeclSizes)]
-    decls = prev ++ [(decl, mkDeclSizes prev func name instrs decl)]
+    decls = prev ++ [(thedecl, mkDeclSizes prev func name instrs thedecl)]
 
     getFctLevel :: String -> Maybe Int
     getFctLevel name = findIndex (elem name) . map (map fst . M.toList . dfuns . fst) $ decls
@@ -220,7 +220,7 @@ genFunction lbls prev name func decl instrs = do
     genAccess (AccessFull id) =
         if fst id > (fromIntegral $ length decls) then do
             let d = snd . last $ decls
-            return (Pointer rbp (-((frameSize d) - 8*(nbNestedFor d) + 8*(fst id - (fromIntegral $ length decls)))))
+            return (Pointer rbp (-((frameSize d) - 4*(nbNestedFor d) + 4*(fst id - (fromIntegral $ length decls)))))
         else do
             let off = getOffset decls id
             movq rbp rax
@@ -262,7 +262,8 @@ genFunction lbls prev name func decl instrs = do
                 genExpr e
                 case t of
                     TInteger -> do
-                        pushq rax
+                        subq (int 4) rsp
+                        movl eax (Pointer rsp 0)
                     TCharacter -> do
                         subq (int 1) rsp
                         movb al (Pointer rsp 0)
@@ -321,7 +322,7 @@ genFunction lbls prev name func decl instrs = do
                 pushq rax
                 memAcc <- genAccess acc
                 popq rbx
-                movq rbx memAcc
+                movl ebx memAcc
             TCharacter -> do
                 pushq rax
                 memAcc <- genAccess acc
@@ -363,7 +364,7 @@ genFunction lbls prev name func decl instrs = do
         let off = (+24) . argsSize . snd . last $ decls
         case ctypeToTyped . snd $ e of
             TInteger -> do
-                movq rax (Pointer rbp off)
+                movl eax (Pointer rbp off)
             TCharacter -> do
                 movb al (Pointer rbp off)
             TBoolean -> do
@@ -403,7 +404,7 @@ genFunction lbls prev name func decl instrs = do
         pushq rax
         memId <- genAccess (AccessFull id)
         popq rbx
-        movq rbx memId
+        movl ebx memId
         if rev then genExpr from
         else genExpr to
         pushq rax
@@ -413,16 +414,16 @@ genFunction lbls prev name func decl instrs = do
         label bodyLabel
         mapM_ genInstr instrs
         memId <- genAccess (AccessFull id)
-        movq memId rbx
-        if rev then decq rbx
-        else incq rbx
-        movq rbx memId
+        movl memId ebx
+        if rev then decl ebx
+        else incl ebx
+        movl ebx memId
         label condLabel
         memId <- genAccess (AccessFull id)
-        movq memId rax
+        movl memId eax
         popq rbx
         pushq rbx
-        cmpq rax rbx
+        cmpl eax ebx
         if rev then jle bodyLabel
         else jge bodyLabel
         popq rbx
@@ -446,7 +447,7 @@ genFunction lbls prev name func decl instrs = do
     genExpr :: TPExpr -> Asm ()
 
     genExpr (TEInt i, _) = do
-        movq i rax
+        movl i eax
 
     genExpr (TEChar c, _) = do
         movq (int . ord $ c) rax
@@ -461,7 +462,7 @@ genFunction lbls prev name func decl instrs = do
         memAcc <- genAccess a
         case t of
             TInteger -> do
-                movq memAcc rax
+                movl memAcc eax
             TCharacter -> do
                 movzbq memAcc rax
             TBoolean -> do
@@ -497,22 +498,22 @@ genFunction lbls prev name func decl instrs = do
             GreaterEqual -> evalCond setge
             Add -> do
                 evalBothExpr
-                addq rbx rax
+                addl ebx eax
             Subtract -> do
                 evalBothExpr
-                subq rbx rax
+                subl ebx eax
             Multiply -> do
                 evalBothExpr
-                imulq rbx rax
-            Divide -> do
+                imull ebx eax
+            Divide -> do -- TODO : int 8 -> 4
                 evalBothExpr
-                cqto
-                idivq rbx
-            Rem -> do
+                cltd
+                idivl ebx
+            Rem -> do -- Idem
                 evalBothExpr
-                cqto
-                idivq rbx
-                movq rdx rax
+                cltd
+                idivl ebx
+                movl edx eax
             And -> do
                 evalBothExpr
                 andq rbx rax
@@ -543,7 +544,7 @@ genFunction lbls prev name func decl instrs = do
         evalCond :: (Register -> Asm ()) -> Asm ()
         evalCond setcond = do
             evalBothExpr
-            cmpq rbx rax
+            cmpl ebx eax
             setcond al
             andq (int 1) rax
         bigCond :: Register -> Register -> Integer -> Integer -> Label -> Asm ()
@@ -577,7 +578,7 @@ genFunction lbls prev name func decl instrs = do
             Not -> do
                 xorq (int 1) rax
             Negate -> do
-                negq rax
+                negl eax
 
     genExpr (TENew s, _) = do
         let size = getSize decls s
@@ -589,7 +590,7 @@ genFunction lbls prev name func decl instrs = do
         doFctCall s args
         case t of
             TInteger ->
-                movq (Pointer rsp 0) rax
+                movl (Pointer rsp 0) eax
             TCharacter ->
                 movzbq (Pointer rsp 0) rax
             TBoolean ->
